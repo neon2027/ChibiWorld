@@ -16,8 +16,7 @@ const STUN_SERVERS = {
     ]
 };
 
-const VAD_INTERVAL = 80;       // ms between voice activity checks
-const VAD_THRESHOLD = 3;       // mean amplitude threshold (0-128, time-domain) to consider speaking
+const VAD_THRESHOLD = 0.008;   // RMS threshold (0–1 float PCM) to consider speaking
 const VAD_HOLD_MS = 400;       // hold speaking state this many ms after going silent
 
 export class WebRTCManager {
@@ -29,8 +28,7 @@ export class WebRTCManager {
         this._remoteAudio = new Map(); // userId -> <audio> element
         this._localStream = null;
         this._audioCtx = null;
-        this._analyser = null;
-        this._vadTimer = null;
+        this._processor = null;
         this._speaking = false;
         this._speakingHoldTimer = null;
         this._muted = false;
@@ -82,59 +80,47 @@ export class WebRTCManager {
     // === Voice Activity Detection ===
     async _setupVAD() {
         this._audioCtx = new AudioContext();
-        console.log('[VAD] AudioContext state:', this._audioCtx.state);
+        console.log('[VAD] AudioContext created, state:', this._audioCtx.state);
 
-        // Always resume BEFORE connecting source — connecting while suspended
-        // causes getByteTimeDomainData to return all-128 (silence) forever.
         if (this._audioCtx.state !== 'running') {
             await this._audioCtx.resume();
             console.log('[VAD] AudioContext resumed, state now:', this._audioCtx.state);
         }
 
         const source = this._audioCtx.createMediaStreamSource(this._localStream);
-        this._analyser = this._audioCtx.createAnalyser();
-        this._analyser.fftSize = 1024;
-        this._analyser.smoothingTimeConstant = 0.3;
-        source.connect(this._analyser);
 
-        // Browsers skip processing audio nodes not connected to destination.
-        // Route through a muted gain node to force the graph to run.
-        const silentGain = this._audioCtx.createGain();
-        silentGain.gain.value = 0;
-        this._analyser.connect(silentGain);
-        silentGain.connect(this._audioCtx.destination);
+        // ScriptProcessorNode fires onaudioprocess with real float PCM samples.
+        // Unlike AnalyserNode, it doesn't need a destination connection trick —
+        // it processes data as long as source → processor → destination is wired.
+        const processor = this._audioCtx.createScriptProcessor(2048, 1, 1);
+        this._processor = processor;
 
-        console.log('[VAD] Analyser connected, fftSize:', this._analyser.fftSize);
+        source.connect(processor);
+        processor.connect(this._audioCtx.destination); // required for onaudioprocess to fire
 
-        // Use time-domain data: values are 0-255 centered at 128 (silence = 128)
-        // Frequency data can stay all-zero for quiet/speech; time-domain is reliable.
-        const buf = new Uint8Array(this._analyser.fftSize);
+        console.log('[VAD] ScriptProcessorNode ready');
+
         let _logThrottle = 0;
 
-        this._vadTimer = setInterval(() => {
-            if (!this._analyser) return;
-            this._analyser.getByteTimeDomainData(buf);
+        processor.onaudioprocess = (e) => {
+            const data = e.inputBuffer.getChannelData(0); // Float32Array, values -1 to 1
 
-            // Amplitude = mean absolute deviation from center (128)
+            // RMS amplitude
             let sum = 0;
-            for (let i = 0; i < buf.length; i++) sum += Math.abs(buf[i] - 128);
-            const amplitude = sum / buf.length; // 0–128
+            for (let i = 0; i < data.length; i++) sum += data[i] * data[i];
+            const rms = Math.sqrt(sum / data.length); // 0–1
 
-            // Log every ~1s so the console isn't spammed
             _logThrottle++;
-            if (_logThrottle % 12 === 0) {
-                const samples = `${buf[0]},${buf[100]},${buf[200]},${buf[300]}`; // should vary from 128 if audio flows
-                console.log(`[VAD] amplitude=${amplitude.toFixed(2)} samples=[${samples}] speaking=${this._speaking} ctxState=${this._audioCtx?.state}`);
+            if (_logThrottle % 20 === 0) {
+                console.log(`[VAD] rms=${rms.toFixed(4)} muted=${this._muted} speaking=${this._speaking}`);
             }
 
-            // Emit continuous mic level (0–1) even when muted so the meter shows silence
             if (this._onMicLevel) {
-                this._onMicLevel(this._muted ? 0 : Math.min(amplitude / 20, 1));
+                this._onMicLevel(this._muted ? 0 : Math.min(rms / 0.1, 1));
             }
 
             if (this._muted) return;
 
-            const rms = amplitude; // reuse same value for threshold check below
             if (rms > VAD_THRESHOLD) {
                 clearTimeout(this._speakingHoldTimer);
                 if (!this._speaking) {
@@ -143,7 +129,6 @@ export class WebRTCManager {
                     this._socket.emit('voice:speaking', { speaking: true });
                 }
             } else if (this._speaking) {
-                // Hold before marking silent
                 clearTimeout(this._speakingHoldTimer);
                 this._speakingHoldTimer = setTimeout(() => {
                     this._speaking = false;
@@ -151,7 +136,7 @@ export class WebRTCManager {
                     this._socket.emit('voice:speaking', { speaking: false });
                 }, VAD_HOLD_MS);
             }
-        }, VAD_INTERVAL);
+        };
     }
 
     // === Peer Connection Management ===
@@ -171,16 +156,27 @@ export class WebRTCManager {
             this._attachRemoteAudio(remoteUserId, event.streams[0]);
         };
 
-        // ICE candidates
-        pc.onicecandidate = (event) => {
-            if (event.candidate) {
-                this._socket.emit('voice:ice', { toUserId: remoteUserId, candidate: event.candidate });
+        pc.onconnectionstatechange = () => {
+            console.log(`[RTC] peer ${remoteUserId} connectionState: ${pc.connectionState}`);
+            if (pc.connectionState === 'failed' || pc.connectionState === 'closed') {
+                this._closePeer(remoteUserId);
             }
         };
 
-        pc.onconnectionstatechange = () => {
-            if (pc.connectionState === 'failed' || pc.connectionState === 'closed') {
-                this._closePeer(remoteUserId);
+        pc.oniceconnectionstatechange = () => {
+            console.log(`[RTC] peer ${remoteUserId} iceConnectionState: ${pc.iceConnectionState}`);
+        };
+
+        pc.onicegatheringstatechange = () => {
+            console.log(`[RTC] peer ${remoteUserId} iceGatheringState: ${pc.iceGatheringState}`);
+        };
+
+        pc.onicecandidate = (event) => {
+            if (event.candidate) {
+                console.log(`[RTC] ICE candidate for ${remoteUserId}: ${event.candidate.type} ${event.candidate.protocol}`);
+                this._socket.emit('voice:ice', { toUserId: remoteUserId, candidate: event.candidate });
+            } else {
+                console.log(`[RTC] ICE gathering complete for peer ${remoteUserId}`);
             }
         };
 
@@ -262,20 +258,24 @@ export class WebRTCManager {
     }
 
     _cleanup() {
-        clearInterval(this._vadTimer);
         clearTimeout(this._speakingHoldTimer);
-        this._vadTimer = null;
+
+        if (this._processor) {
+            this._processor.onaudioprocess = null;
+            this._processor.disconnect();
+            this._processor = null;
+        }
+
+        if (this._audioCtx) {
+            this._audioCtx.close();
+            this._audioCtx = null;
+        }
 
         for (const userId of [...this._peers.keys()]) this._closePeer(userId);
 
         if (this._localStream) {
             for (const track of this._localStream.getTracks()) track.stop();
             this._localStream = null;
-        }
-
-        if (this._audioCtx) {
-            this._audioCtx.close();
-            this._audioCtx = null;
         }
 
         this._speaking = false;
