@@ -28,6 +28,7 @@ export class WebRTCManager {
         this._remoteAudio = new Map(); // userId -> <audio> element
         this._localStream = null;
         this._audioCtx = null;
+        this._vadSource = null;
         this._processor = null;
         this._speaking = false;
         this._speakingHoldTimer = null;
@@ -87,18 +88,17 @@ export class WebRTCManager {
             console.log('[VAD] AudioContext resumed, state now:', this._audioCtx.state);
         }
 
-        const source = this._audioCtx.createMediaStreamSource(this._localStream);
+        // Save source on this — local variables get garbage collected after _setupVAD
+        // returns, which silently zeros out the audio pipeline (Safari is aggressive about this)
+        this._vadSource = this._audioCtx.createMediaStreamSource(this._localStream);
 
-        // ScriptProcessorNode fires onaudioprocess with real float PCM samples.
-        // Unlike AnalyserNode, it doesn't need a destination connection trick —
-        // it processes data as long as source → processor → destination is wired.
-        const processor = this._audioCtx.createScriptProcessor(2048, 1, 1);
+        const processor = this._audioCtx.createScriptProcessor(4096, 1, 1);
         this._processor = processor;
 
-        source.connect(processor);
-        processor.connect(this._audioCtx.destination); // required for onaudioprocess to fire
+        this._vadSource.connect(processor);
+        processor.connect(this._audioCtx.destination);
 
-        console.log('[VAD] ScriptProcessorNode ready');
+        console.log('[VAD] ScriptProcessorNode ready, sample rate:', this._audioCtx.sampleRate);
 
         let _logThrottle = 0;
 
@@ -264,6 +264,11 @@ export class WebRTCManager {
             this._processor.onaudioprocess = null;
             this._processor.disconnect();
             this._processor = null;
+        }
+
+        if (this._vadSource) {
+            this._vadSource.disconnect();
+            this._vadSource = null;
         }
 
         if (this._audioCtx) {
