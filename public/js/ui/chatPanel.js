@@ -26,7 +26,7 @@ export class ChatPanel {
                 <div class="chat-messages scrollbar" id="chatMessages"></div>
                 <div class="chat-typing" id="chatTyping"></div>
                 <div class="chat-input-row">
-                    <input class="chat-input" id="chatInput" placeholder="Say something..." maxlength="500">
+                    <input class="chat-input" id="chatInput" placeholder="Type a message... (Enter to send)" maxlength="500">
                     <button class="chat-send" id="chatSend">➤</button>
                 </div>
             </div>
