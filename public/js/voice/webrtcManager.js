@@ -3,7 +3,16 @@ import { getSocket } from '../socket.js';
 const STUN_SERVERS = {
     iceServers: [
         { urls: 'stun:stun.l.google.com:19302' },
-        { urls: 'stun:stun1.l.google.com:19302' }
+        {
+            urls: 'turns:chibi-world.duckdns.org:5349',
+            username: 'chibi',
+            credential: 'yourpassword'
+        },
+        {
+            urls: 'turn:chibi-world.duckdns.org:3478',
+            username: 'chibi',
+            credential: 'yourpassword'
+        }
     ]
 };
 
