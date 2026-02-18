@@ -8,6 +8,7 @@ export class PlayerManager {
         this.scene = scene;
         this._players = new Map(); // userId -> { group, targetX, targetZ, currentX, currentZ, username, moving }
         this._labels = new Map();  // userId -> DOM element
+        this._bubbles = new Map(); // userId -> { element, timer }
         this._camera = null;
         this._canvas = null;
     }
@@ -90,6 +91,9 @@ export class PlayerManager {
     }
 
     _updateLabels() {
+        const w = this._canvas.clientWidth;
+        const h = this._canvas.clientHeight;
+
         for (const [id, p] of this._players) {
             let label = this._labels.get(id);
             if (!label) {
@@ -100,28 +104,60 @@ export class PlayerManager {
                 this._labels.set(id, label);
             }
 
-            // Project 3D position to screen
+            // Project 3D position to screen (nametag at y=8.5, bubble at y=11)
             const pos3D = new THREE.Vector3(p.currentX, 8.5, p.currentZ);
             pos3D.project(this._camera);
 
-            const w = this._canvas.clientWidth;
-            const h = this._canvas.clientHeight;
             const sx = (pos3D.x * 0.5 + 0.5) * w;
             const sy = (-pos3D.y * 0.5 + 0.5) * h;
+            const visible = pos3D.z < 1;
 
-            if (pos3D.z < 1) {
-                label.style.display = 'block';
-                label.style.left = `${sx}px`;
-                label.style.top = `${sy}px`;
-            } else {
-                label.style.display = 'none';
+            label.style.display = visible ? 'block' : 'none';
+            label.style.left = `${sx}px`;
+            label.style.top = `${sy}px`;
+
+            // Update bubble position (slightly above nametag)
+            const b = this._bubbles.get(id);
+            if (b && b.element.style.display !== 'none') {
+                const bpos = new THREE.Vector3(p.currentX, 11, p.currentZ);
+                bpos.project(this._camera);
+                b.element.style.left = `${(bpos.x * 0.5 + 0.5) * w}px`;
+                b.element.style.top = `${(-bpos.y * 0.5 + 0.5) * h}px`;
+                b.element.style.display = visible ? 'block' : 'none';
             }
         }
+    }
+
+    showBubble(userId, text) {
+        const p = this._players.get(userId);
+        if (!p || !this._canvas) return;
+
+        let b = this._bubbles.get(userId);
+        if (!b) {
+            const el = document.createElement('div');
+            el.className = 'chat-bubble';
+            el.style.display = 'none';
+            this._canvas.parentElement?.appendChild(el);
+            b = { element: el, timer: null };
+            this._bubbles.set(userId, b);
+        }
+
+        clearTimeout(b.timer);
+        b.element.textContent = text.length > 60 ? text.slice(0, 58) + '…' : text;
+        b.element.style.display = 'block';
+        b.element.classList.remove('fading');
+
+        b.timer = setTimeout(() => {
+            b.element.classList.add('fading');
+            setTimeout(() => { b.element.style.display = 'none'; }, 500);
+        }, 4000);
     }
 
     clearLabels() {
         for (const label of this._labels.values()) label.remove();
         this._labels.clear();
+        for (const b of this._bubbles.values()) { clearTimeout(b.timer); b.element.remove(); }
+        this._bubbles.clear();
     }
 
     destroy() {
