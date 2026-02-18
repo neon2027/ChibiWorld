@@ -19,6 +19,9 @@ export class VoiceUI {
                 <span class="voice-label">Voice</span>
             </button>
             <button class="voice-mute-btn hidden" id="voiceMuteBtn" title="Mute / Unmute">🎤</button>
+            <div class="mic-meter hidden" id="voiceMicMeter" title="Mic level">
+                <div class="mic-meter-fill" id="voiceMicFill"></div>
+            </div>
             <button class="voice-leave-btn hidden" id="voiceLeaveBtn" title="Leave Voice">📵</button>
             <div class="voice-participants" id="voiceParticipants"></div>
         `;
@@ -28,6 +31,8 @@ export class VoiceUI {
         this._muteBtn  = el.querySelector('#voiceMuteBtn');
         this._leaveBtn = el.querySelector('#voiceLeaveBtn');
         this._partList = el.querySelector('#voiceParticipants');
+        this._micMeter = el.querySelector('#voiceMicMeter');
+        this._micFill  = el.querySelector('#voiceMicFill');
 
         this._joinBtn.addEventListener('click', () => this._join());
         this._muteBtn.addEventListener('click', () => this._toggleMute());
@@ -36,13 +41,21 @@ export class VoiceUI {
 
     async _join() {
         try {
-            this._rtc = new WebRTCManager(this._userId, (uid, speaking) => {
-                this._onSpeakingChange(uid, speaking);
-                this._updateParticipantSpeaking(uid, speaking);
-            });
+            this._rtc = new WebRTCManager(
+                this._userId,
+                (uid, speaking) => {
+                    this._onSpeakingChange(uid, speaking);
+                    this._updateParticipantSpeaking(uid, speaking);
+                    if (uid === this._userId) {
+                        this._muteBtn.classList.toggle('speaking', speaking);
+                    }
+                },
+                (level) => this._updateMicLevel(level)
+            );
             await this._rtc.join();
             this._joinBtn.classList.add('hidden');
             this._muteBtn.classList.remove('hidden');
+            this._micMeter.classList.remove('hidden');
             this._leaveBtn.classList.remove('hidden');
             this._addParticipant(this._userId, '(you)');
             showToast('Voice Chat', 'Joined voice chat!', 'success');
@@ -58,6 +71,17 @@ export class VoiceUI {
         this._muteBtn.textContent = nowMuted ? '🔇' : '🎤';
         this._muteBtn.title = nowMuted ? 'Unmute' : 'Mute';
         this._muteBtn.classList.toggle('muted', nowMuted);
+        if (nowMuted) this._muteBtn.classList.remove('speaking');
+    }
+
+    _updateMicLevel(level) {
+        // level is 0–1; map to a min visible floor so bar is always visible when joined
+        const pct = Math.round(level * 100);
+        this._micFill.style.height = `${pct}%`;
+
+        // Color: green → yellow → red based on level
+        const h = Math.round(120 - level * 100); // 120=green, 20=red
+        this._micFill.style.background = `hsl(${h}, 80%, 50%)`;
     }
 
     _leave() {
@@ -65,9 +89,11 @@ export class VoiceUI {
         this._rtc = null;
         this._joinBtn.classList.remove('hidden');
         this._muteBtn.classList.add('hidden');
+        this._micMeter.classList.add('hidden');
         this._leaveBtn.classList.add('hidden');
         this._muteBtn.textContent = '🎤';
-        this._muteBtn.classList.remove('muted');
+        this._muteBtn.classList.remove('muted', 'speaking');
+        this._micFill.style.height = '0%';
         this._partList.innerHTML = '';
         this._onSpeakingChange(this._userId, false);
         showToast('Voice Chat', 'Left voice chat.', 'info');

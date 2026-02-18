@@ -752,6 +752,36 @@ body {
     color: #e05c7a;
     background: rgba(224, 92, 122, 0.1);
 }
+.voice-mute-btn.speaking {
+    border-color: var(--green);
+    box-shadow: 0 0 0 3px rgba(125, 223, 100, 0.25);
+    animation: micRing 0.8s ease-in-out infinite alternate;
+}
+@keyframes micRing {
+    from { box-shadow: 0 0 0 2px rgba(125, 223, 100, 0.2); }
+    to   { box-shadow: 0 0 0 5px rgba(125, 223, 100, 0.05); }
+}
+
+/* ===================== Mic Level Meter ===================== */
+.mic-meter {
+    width: 5px;
+    height: 30px;
+    background: rgba(255, 255, 255, 0.08);
+    border-radius: 3px;
+    overflow: hidden;
+    position: relative;
+    flex-shrink: 0;
+}
+.mic-meter-fill {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    height: 0%;
+    background: var(--green);
+    border-radius: 3px;
+    transition: height 0.07s ease-out, background 0.15s ease;
+}
 
 .voice-leave-btn {
     background: rgba(224, 92, 122, 0.1);

@@ -17,13 +17,14 @@ const STUN_SERVERS = {
 };
 
 const VAD_INTERVAL = 80;       // ms between voice activity checks
-const VAD_THRESHOLD = 12;      // RMS threshold (0-255) to consider speaking
+const VAD_THRESHOLD = 3;       // mean amplitude threshold (0-128, time-domain) to consider speaking
 const VAD_HOLD_MS = 400;       // hold speaking state this many ms after going silent
 
 export class WebRTCManager {
-    constructor(userId, onSpeakingChange) {
+    constructor(userId, onSpeakingChange, onMicLevel) {
         this._userId = userId;
         this._onSpeakingChange = onSpeakingChange; // (userId, speaking) => void
+        this._onMicLevel = onMicLevel;             // (level: 0-1) => void  [optional]
         this._peers = new Map();      // userId -> RTCPeerConnection
         this._remoteAudio = new Map(); // userId -> <audio> element
         this._localStream = null;
@@ -46,7 +47,9 @@ export class WebRTCManager {
     async join() {
         if (this._inVoice) return;
         try {
+            console.log('[Voice] Requesting microphone...');
             this._localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+            console.log('[Voice] Mic granted, tracks:', this._localStream.getAudioTracks().map(t => t.label));
             this._inVoice = true;
             this._setupVAD();
             this._socket.emit('voice:join');
@@ -77,24 +80,61 @@ export class WebRTCManager {
     }
 
     // === Voice Activity Detection ===
-    _setupVAD() {
+    async _setupVAD() {
         this._audioCtx = new AudioContext();
+        console.log('[VAD] AudioContext state:', this._audioCtx.state);
+
+        // Always resume BEFORE connecting source — connecting while suspended
+        // causes getByteTimeDomainData to return all-128 (silence) forever.
+        if (this._audioCtx.state !== 'running') {
+            await this._audioCtx.resume();
+            console.log('[VAD] AudioContext resumed, state now:', this._audioCtx.state);
+        }
+
         const source = this._audioCtx.createMediaStreamSource(this._localStream);
         this._analyser = this._audioCtx.createAnalyser();
-        this._analyser.fftSize = 256;
-        this._analyser.smoothingTimeConstant = 0.4;
+        this._analyser.fftSize = 1024;
+        this._analyser.smoothingTimeConstant = 0.3;
         source.connect(this._analyser);
 
-        const buf = new Uint8Array(this._analyser.frequencyBinCount);
+        // Browsers skip processing audio nodes not connected to destination.
+        // Route through a muted gain node to force the graph to run.
+        const silentGain = this._audioCtx.createGain();
+        silentGain.gain.value = 0;
+        this._analyser.connect(silentGain);
+        silentGain.connect(this._audioCtx.destination);
+
+        console.log('[VAD] Analyser connected, fftSize:', this._analyser.fftSize);
+
+        // Use time-domain data: values are 0-255 centered at 128 (silence = 128)
+        // Frequency data can stay all-zero for quiet/speech; time-domain is reliable.
+        const buf = new Uint8Array(this._analyser.fftSize);
+        let _logThrottle = 0;
 
         this._vadTimer = setInterval(() => {
-            if (!this._analyser || this._muted) return;
-            this._analyser.getByteFrequencyData(buf);
-            // RMS of frequency data
-            let sum = 0;
-            for (let i = 0; i < buf.length; i++) sum += buf[i] * buf[i];
-            const rms = Math.sqrt(sum / buf.length);
+            if (!this._analyser) return;
+            this._analyser.getByteTimeDomainData(buf);
 
+            // Amplitude = mean absolute deviation from center (128)
+            let sum = 0;
+            for (let i = 0; i < buf.length; i++) sum += Math.abs(buf[i] - 128);
+            const amplitude = sum / buf.length; // 0–128
+
+            // Log every ~1s so the console isn't spammed
+            _logThrottle++;
+            if (_logThrottle % 12 === 0) {
+                const samples = `${buf[0]},${buf[100]},${buf[200]},${buf[300]}`; // should vary from 128 if audio flows
+                console.log(`[VAD] amplitude=${amplitude.toFixed(2)} samples=[${samples}] speaking=${this._speaking} ctxState=${this._audioCtx?.state}`);
+            }
+
+            // Emit continuous mic level (0–1) even when muted so the meter shows silence
+            if (this._onMicLevel) {
+                this._onMicLevel(this._muted ? 0 : Math.min(amplitude / 20, 1));
+            }
+
+            if (this._muted) return;
+
+            const rms = amplitude; // reuse same value for threshold check below
             if (rms > VAD_THRESHOLD) {
                 clearTimeout(this._speakingHoldTimer);
                 if (!this._speaking) {
@@ -186,7 +226,7 @@ export class WebRTCManager {
         });
 
         // Someone joined voice — they'll send us an offer, nothing to do yet
-        s.on('voice:userJoined', ({ userId }) => {
+        s.on('voice:userJoined', () => {
             // Initiator role handled by the joiner via voice:existingMembers
         });
 
