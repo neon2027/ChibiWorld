@@ -29,6 +29,7 @@ export class WebRTCManager {
         this._localStream = null;
         this._audioCtx = null;
         this._vadSource = null;
+        this._workletNode = null;
         this._processor = null;
         this._speaking = false;
         this._speakingHoldTimer = null;
@@ -80,63 +81,81 @@ export class WebRTCManager {
 
     // === Voice Activity Detection ===
     async _setupVAD() {
-        this._audioCtx = new AudioContext();
-        console.log('[VAD] AudioContext created, state:', this._audioCtx.state);
+        // Match AudioContext sample rate to mic to avoid silent resampling in Safari
+        const trackSettings = this._localStream.getAudioTracks()[0]?.getSettings();
+        const sampleRate = trackSettings?.sampleRate || 48000;
+        this._audioCtx = new AudioContext({ sampleRate });
+        console.log('[VAD] AudioContext created, state:', this._audioCtx.state, 'sampleRate:', this._audioCtx.sampleRate);
 
         if (this._audioCtx.state !== 'running') {
             await this._audioCtx.resume();
-            console.log('[VAD] AudioContext resumed, state now:', this._audioCtx.state);
+            console.log('[VAD] AudioContext resumed:', this._audioCtx.state);
         }
 
-        // Save source on this — local variables get garbage collected after _setupVAD
-        // returns, which silently zeros out the audio pipeline (Safari is aggressive about this)
+        // Keep source reference — local vars get GC'd after async function returns
         this._vadSource = this._audioCtx.createMediaStreamSource(this._localStream);
 
-        const processor = this._audioCtx.createScriptProcessor(4096, 1, 1);
-        this._processor = processor;
+        // Try AudioWorklet first (modern, dedicated audio thread — works in Safari 14.5+)
+        // Fall back to ScriptProcessorNode if worklet fails
+        try {
+            await this._audioCtx.audioWorklet.addModule('/js/voice/vadWorklet.js');
+            this._workletNode = new AudioWorkletNode(this._audioCtx, 'vad-processor');
 
-        this._vadSource.connect(processor);
-        processor.connect(this._audioCtx.destination);
-
-        console.log('[VAD] ScriptProcessorNode ready, sample rate:', this._audioCtx.sampleRate);
-
-        let _logThrottle = 0;
-
-        processor.onaudioprocess = (e) => {
-            const data = e.inputBuffer.getChannelData(0); // Float32Array, values -1 to 1
-
-            // RMS amplitude
-            let sum = 0;
-            for (let i = 0; i < data.length; i++) sum += data[i] * data[i];
-            const rms = Math.sqrt(sum / data.length); // 0–1
-
-            _logThrottle++;
-            if (_logThrottle % 20 === 0) {
-                console.log(`[VAD] rms=${rms.toFixed(4)} muted=${this._muted} speaking=${this._speaking}`);
-            }
-
-            if (this._onMicLevel) {
-                this._onMicLevel(this._muted ? 0 : Math.min(rms / 0.1, 1));
-            }
-
-            if (this._muted) return;
-
-            if (rms > VAD_THRESHOLD) {
-                clearTimeout(this._speakingHoldTimer);
-                if (!this._speaking) {
-                    this._speaking = true;
-                    this._onSpeakingChange(this._userId, true);
-                    this._socket.emit('voice:speaking', { speaking: true });
+            let throttle = 0;
+            this._workletNode.port.onmessage = (e) => {
+                throttle++;
+                if (throttle % 375 === 0) { // log ~every 1s (worklet fires at ~375fps for 128-sample frames)
+                    console.log(`[VAD] worklet rms=${e.data.toFixed(4)} muted=${this._muted} speaking=${this._speaking}`);
                 }
-            } else if (this._speaking) {
-                clearTimeout(this._speakingHoldTimer);
-                this._speakingHoldTimer = setTimeout(() => {
-                    this._speaking = false;
-                    this._onSpeakingChange(this._userId, false);
-                    this._socket.emit('voice:speaking', { speaking: false });
-                }, VAD_HOLD_MS);
+                this._handleRms(e.data);
+            };
+
+            this._vadSource.connect(this._workletNode);
+            this._workletNode.connect(this._audioCtx.destination);
+            console.log('[VAD] AudioWorklet ready');
+        } catch (err) {
+            console.warn('[VAD] AudioWorklet unavailable, using ScriptProcessorNode:', err.message);
+
+            this._processor = this._audioCtx.createScriptProcessor(4096, 1, 1);
+            let throttle = 0;
+            this._processor.onaudioprocess = (e) => {
+                const data = e.inputBuffer.getChannelData(0);
+                let sum = 0;
+                for (let i = 0; i < data.length; i++) sum += data[i] * data[i];
+                const rms = Math.sqrt(sum / data.length);
+                throttle++;
+                if (throttle % 20 === 0) {
+                    console.log(`[VAD] scp rms=${rms.toFixed(4)} muted=${this._muted} speaking=${this._speaking}`);
+                }
+                this._handleRms(rms);
+            };
+
+            this._vadSource.connect(this._processor);
+            this._processor.connect(this._audioCtx.destination);
+            console.log('[VAD] ScriptProcessorNode ready');
+        }
+    }
+
+    _handleRms(rms) {
+        if (this._onMicLevel) {
+            this._onMicLevel(this._muted ? 0 : Math.min(rms / 0.1, 1));
+        }
+        if (this._muted) return;
+        if (rms > VAD_THRESHOLD) {
+            clearTimeout(this._speakingHoldTimer);
+            if (!this._speaking) {
+                this._speaking = true;
+                this._onSpeakingChange(this._userId, true);
+                this._socket.emit('voice:speaking', { speaking: true });
             }
-        };
+        } else if (this._speaking) {
+            clearTimeout(this._speakingHoldTimer);
+            this._speakingHoldTimer = setTimeout(() => {
+                this._speaking = false;
+                this._onSpeakingChange(this._userId, false);
+                this._socket.emit('voice:speaking', { speaking: false });
+            }, VAD_HOLD_MS);
+        }
     }
 
     // === Peer Connection Management ===
@@ -259,6 +278,12 @@ export class WebRTCManager {
 
     _cleanup() {
         clearTimeout(this._speakingHoldTimer);
+
+        if (this._workletNode) {
+            this._workletNode.port.onmessage = null;
+            this._workletNode.disconnect();
+            this._workletNode = null;
+        }
 
         if (this._processor) {
             this._processor.onaudioprocess = null;
