@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ChibiWorld</title>
+    <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+    <nav id="navbar" class="navbar hidden">
+        <div class="nav-left">
+            <span class="logo">🌸 ChibiWorld</span>
+            <div class="nav-links" id="navLinks">
+                <a href="#/plaza" class="nav-link">Plaza</a>
+                <a href="#/my-room" class="nav-link">My Room</a>
+                <a href="#/rooms" class="nav-link">Browse</a>
+                <a href="#/world-map" class="nav-link">World Map</a>
+                <a href="#/profile" class="nav-link">Profile</a>
+            </div>
+        </div>
+        <div class="nav-right">
+            <button class="btn-icon" id="btnFriends" title="Friends">👥</button>
+            <span id="navUsername" class="nav-username"></span>
+            <button class="btn-outline" id="btnLogout">Logout</button>
+        </div>
+    </nav>
+
+    <main id="app"></main>
+
+    <!-- Friends overlay -->
+    <div id="friendsOverlay" class="overlay hidden">
+        <div class="overlay-panel">
+            <div class="overlay-header">
+                <span>Friends</span>
+                <button class="btn-icon" id="closeFriends">✕</button>
+            </div>
+            <div id="friendsContent"></div>
+        </div>
+    </div>
+
+    <!-- Toast container -->
+    <div id="toastContainer"></div>
+
+    <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.min.js"
+        }
+    }
+    </script>
+    <script type="module" src="/js/app.js"></script>
+</body>
+</html>
