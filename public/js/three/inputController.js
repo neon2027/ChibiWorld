@@ -12,6 +12,7 @@ export class InputController {
         this._target = null; // { x, z } in Three.js space
         this._pos = { x: 0, z: 0 }; // current Three.js position
         this._lastEmit = 0;
+        this.camAzimuth = 0; // updated each frame from the view
         this._raycaster = new THREE.Raycaster();
         this._groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
 
@@ -52,18 +53,26 @@ export class InputController {
         const SPEED = 12; // Three.js units/sec
         let moved = false;
 
-        // WASD movement
-        let dx = 0, dz = 0;
-        if (this._keys['KeyW'] || this._keys['ArrowUp'])    dz -= 1;
-        if (this._keys['KeyS'] || this._keys['ArrowDown'])  dz += 1;
-        if (this._keys['KeyA'] || this._keys['ArrowLeft'])  dx -= 1;
-        if (this._keys['KeyD'] || this._keys['ArrowRight']) dx += 1;
+        // WASD movement (camera-relative)
+        let rawDx = 0, rawDz = 0;
+        if (this._keys['KeyW'] || this._keys['ArrowUp'])    rawDz -= 1;
+        if (this._keys['KeyS'] || this._keys['ArrowDown'])  rawDz += 1;
+        if (this._keys['KeyA'] || this._keys['ArrowLeft'])  rawDx -= 1;
+        if (this._keys['KeyD'] || this._keys['ArrowRight']) rawDx += 1;
 
-        if (dx !== 0 || dz !== 0) {
+        if (rawDx !== 0 || rawDz !== 0) {
             this._target = null; // cancel click target
-            const len = Math.sqrt(dx * dx + dz * dz);
-            this._pos.x = Math.max(-50, Math.min(50, this._pos.x + (dx / len) * SPEED * dt));
-            this._pos.z = Math.max(-50, Math.min(50, this._pos.z + (dz / len) * SPEED * dt));
+            const len = Math.sqrt(rawDx * rawDx + rawDz * rawDz);
+            const nx = rawDx / len, nz = rawDz / len;
+
+            // Rotate input by camera azimuth so W always moves toward camera facing direction
+            const sinA = Math.sin(this.camAzimuth);
+            const cosA = Math.cos(this.camAzimuth);
+            const dx = nz * sinA + nx * cosA;
+            const dz = nz * cosA - nx * sinA;
+
+            this._pos.x = Math.max(-50, Math.min(50, this._pos.x + dx * SPEED * dt));
+            this._pos.z = Math.max(-50, Math.min(50, this._pos.z + dz * SPEED * dt));
             moved = true;
 
             // Face direction

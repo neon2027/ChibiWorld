@@ -26,7 +26,7 @@ export class SceneManager {
         this.renderer.setSize(w, h, false);
         this.renderer.shadowMap.enabled = true;
         this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-        this.renderer.setClearColor(0x1a1a2e);
+        this.renderer.setClearColor(0x0d1a0d);
 
         // Resize
         this._ro = new ResizeObserver(() => this._resize());
@@ -44,10 +44,10 @@ export class SceneManager {
     }
 
     addLights(type = 'plaza') {
-        const ambient = new THREE.AmbientLight(0x8888cc, 0.6);
+        const ambient = new THREE.AmbientLight(0x88aa88, 0.7);
         this.scene.add(ambient);
 
-        const sun = new THREE.DirectionalLight(0xffeedd, 1.2);
+        const sun = new THREE.DirectionalLight(0xffeedd, 1.4);
         sun.position.set(20, 40, 20);
         sun.castShadow = true;
         sun.shadow.mapSize.set(1024, 1024);

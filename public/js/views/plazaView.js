@@ -193,6 +193,7 @@ export function renderPlaza(container) {
     _scene.onUpdate((dt) => {
         if (!_input || !_playerGroup) return;
 
+        _input.camAzimuth = _camAzimuth;
         moving = _input.update(dt, _playerGroup);
         animateChibi(_playerGroup, moving, dt);
 

@@ -334,14 +334,20 @@ export async function renderRoom(container, params) {
     _scene.onUpdate((dt) => {
         if (!_playerGroup) return;
         const SPEED = 6;
-        let dx = 0, dz = 0;
-        if (keys['KeyW'] || keys['ArrowUp'])    dz -= SPEED * dt;
-        if (keys['KeyS'] || keys['ArrowDown'])  dz += SPEED * dt;
-        if (keys['KeyA'] || keys['ArrowLeft'])  dx -= SPEED * dt;
-        if (keys['KeyD'] || keys['ArrowRight']) dx += SPEED * dt;
+        let rawDx = 0, rawDz = 0;
+        if (keys['KeyW'] || keys['ArrowUp'])    rawDz -= 1;
+        if (keys['KeyS'] || keys['ArrowDown'])  rawDz += 1;
+        if (keys['KeyA'] || keys['ArrowLeft'])  rawDx -= 1;
+        if (keys['KeyD'] || keys['ArrowRight']) rawDx += 1;
 
-        const moved = dx !== 0 || dz !== 0;
+        const moved = rawDx !== 0 || rawDz !== 0;
         if (moved) {
+            const len = Math.sqrt(rawDx * rawDx + rawDz * rawDz);
+            const nx = rawDx / len, nz = rawDz / len;
+            const sinA = Math.sin(_roomCamAzimuth);
+            const cosA = Math.cos(_roomCamAzimuth);
+            const dx = (nz * sinA + nx * cosA) * SPEED * dt;
+            const dz = (nz * cosA - nx * sinA) * SPEED * dt;
             _playerGroup.position.x = Math.max(0.5, Math.min(ROOM_BOUNDS.w - 0.5, _playerGroup.position.x + dx));
             _playerGroup.position.z = Math.max(0.5, Math.min(ROOM_BOUNDS.d - 0.5, _playerGroup.position.z + dz));
             const now = Date.now();
