@@ -4,13 +4,15 @@ import { worldToThree } from './plazaWorld.js';
 
 // Manages all remote player chibi instances in the scene
 export class PlayerManager {
-    constructor(scene) {
+    constructor(scene, onPlayerClick = null) {
         this.scene = scene;
         this._players = new Map(); // userId -> { group, targetX, targetZ, currentX, currentZ, username, moving }
         this._labels = new Map();  // userId -> DOM element
         this._bubbles = new Map(); // userId -> { element, timer }
+        this._clickTargets = new Map(); // userId -> DOM element (invisible hit area)
         this._camera = null;
         this._canvas = null;
+        this._onPlayerClick = onPlayerClick; // optional callback(userId, username, clientX, clientY)
     }
 
     setCamera(camera, canvas) {
@@ -42,6 +44,8 @@ export class PlayerManager {
         }
         const label = this._labels.get(userId);
         if (label) { label.remove(); this._labels.delete(userId); }
+        const ct = this._clickTargets.get(userId);
+        if (ct) { ct.remove(); this._clickTargets.delete(userId); }
     }
 
     movePlayer(userId, wx, wz) {
@@ -88,6 +92,7 @@ export class PlayerManager {
 
         // Update nametag positions if camera available
         if (this._camera && this._canvas) this._updateLabels();
+        if (this._camera && this._canvas && this._onPlayerClick) this._updateClickTargets();
     }
 
     _updateLabels() {
@@ -128,6 +133,35 @@ export class PlayerManager {
         }
     }
 
+    _updateClickTargets() {
+        const w = this._canvas.clientWidth;
+        const h = this._canvas.clientHeight;
+
+        for (const [id, p] of this._players) {
+            let ct = this._clickTargets.get(id);
+            if (!ct) {
+                ct = document.createElement('div');
+                ct.className = 'player-click-target';
+                this._canvas.parentElement?.appendChild(ct);
+                ct.addEventListener('click', (e) => {
+                    this._onPlayerClick?.(id, p.username, e.clientX, e.clientY);
+                    e.stopPropagation();
+                });
+                this._clickTargets.set(id, ct);
+            }
+
+            const pos3D = new THREE.Vector3(p.currentX, 5, p.currentZ);
+            pos3D.project(this._camera);
+            const sx = (pos3D.x * 0.5 + 0.5) * w;
+            const sy = (-pos3D.y * 0.5 + 0.5) * h;
+            const visible = pos3D.z < 1;
+
+            ct.style.display = visible ? 'block' : 'none';
+            ct.style.left = `${sx - 20}px`;
+            ct.style.top = `${sy - 30}px`;
+        }
+    }
+
     showBubble(userId, text) {
         const p = this._players.get(userId);
         if (!p || !this._canvas) return;
@@ -153,11 +187,19 @@ export class PlayerManager {
         }, 4000);
     }
 
+    setMicSpeaking(userId, speaking) {
+        // Visual indicator on remote player label
+        const label = this._labels.get(userId);
+        if (label) label.classList.toggle('speaking', speaking);
+    }
+
     clearLabels() {
         for (const label of this._labels.values()) label.remove();
         this._labels.clear();
         for (const b of this._bubbles.values()) { clearTimeout(b.timer); b.element.remove(); }
         this._bubbles.clear();
+        for (const ct of this._clickTargets.values()) ct.remove();
+        this._clickTargets.clear();
     }
 
     destroy() {

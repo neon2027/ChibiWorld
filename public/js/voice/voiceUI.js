@@ -1,4 +1,5 @@
 import { WebRTCManager } from './webrtcManager.js';
+import { getSocket } from '../socket.js';
 import { showToast } from '../ui/toast.js';
 
 export class VoiceUI {
@@ -7,23 +8,31 @@ export class VoiceUI {
         this._userId = userId;
         this._onSpeakingChange = onSpeakingChange;
         this._rtc = null;
+        // Map of userId -> username for users currently in voice (visible to all)
+        this._voiceMembers = new Map();
         this._render();
+        this._bindGlobalVoiceEvents();
     }
 
     _render() {
         const el = document.createElement('div');
         el.className = 'voice-bar';
         el.innerHTML = `
-            <button class="voice-join-btn" id="voiceJoinBtn" title="Join Voice Chat">
-                <span class="voice-icon">🎙️</span>
-                <span class="voice-label">Voice</span>
-            </button>
-            <button class="voice-mute-btn hidden" id="voiceMuteBtn" title="Mute / Unmute">🎤</button>
-            <div class="mic-meter hidden" id="voiceMicMeter" title="Mic level">
-                <div class="mic-meter-fill" id="voiceMicFill"></div>
+            <div class="voice-controls-row">
+                <button class="voice-join-btn" id="voiceJoinBtn" title="Join Voice Chat">
+                    <span class="voice-icon">🎙️</span>
+                    <span class="voice-label">Voice</span>
+                </button>
+                <button class="voice-mute-btn hidden" id="voiceMuteBtn" title="Mute / Unmute">🎤</button>
+                <div class="mic-meter hidden" id="voiceMicMeter" title="Mic level">
+                    <div class="mic-meter-fill" id="voiceMicFill"></div>
+                </div>
+                <button class="voice-leave-btn hidden" id="voiceLeaveBtn" title="Leave Voice">📵</button>
             </div>
-            <button class="voice-leave-btn hidden" id="voiceLeaveBtn" title="Leave Voice">📵</button>
-            <div class="voice-participants" id="voiceParticipants"></div>
+            <div class="voice-members-list" id="voiceMembersList">
+                <div class="voice-members-label">In Voice</div>
+                <div class="voice-members-dots" id="voiceParticipants"></div>
+            </div>
         `;
         this._container.appendChild(el);
         this._el = el;
@@ -33,10 +42,46 @@ export class VoiceUI {
         this._partList = el.querySelector('#voiceParticipants');
         this._micMeter = el.querySelector('#voiceMicMeter');
         this._micFill  = el.querySelector('#voiceMicFill');
+        this._membersList = el.querySelector('#voiceMembersList');
 
         this._joinBtn.addEventListener('click', () => this._join());
         this._muteBtn.addEventListener('click', () => this._toggleMute());
         this._leaveBtn.addEventListener('click', () => this._leave());
+    }
+
+    // Subscribe to voice membership events visible to all users
+    _bindGlobalVoiceEvents() {
+        const socket = getSocket();
+        if (!socket) return;
+
+        // Request current snapshot
+        socket.emit('voice:requestSnapshot');
+
+        socket.on('voice:snapshot', ({ members }) => {
+            for (const m of members) {
+                if (!this._voiceMembers.has(m.userId || m)) {
+                    this._voiceMembers.set(m.userId || m, m.username || '...');
+                    this._addMemberDot(m.userId || m, m.username || '...');
+                }
+            }
+        });
+
+        socket.on('voice:memberJoined', ({ userId, username }) => {
+            if (!this._voiceMembers.has(userId)) {
+                this._voiceMembers.set(userId, username);
+                this._addMemberDot(userId, username);
+            }
+        });
+
+        socket.on('voice:memberLeft', ({ userId }) => {
+            this._voiceMembers.delete(userId);
+            this._removeMemberDot(userId);
+        });
+
+        // Update dot animations for everyone (voice and non-voice alike)
+        socket.on('voice:speakingUpdate', ({ userId, speaking }) => {
+            this._updateMemberSpeaking(userId, speaking);
+        });
     }
 
     async _join() {
@@ -45,7 +90,7 @@ export class VoiceUI {
                 this._userId,
                 (uid, speaking) => {
                     this._onSpeakingChange(uid, speaking);
-                    this._updateParticipantSpeaking(uid, speaking);
+                    this._updateMemberSpeaking(uid, speaking);
                     if (uid === this._userId) {
                         this._muteBtn.classList.toggle('speaking', speaking);
                     }
@@ -57,7 +102,11 @@ export class VoiceUI {
             this._muteBtn.classList.remove('hidden');
             this._micMeter.classList.remove('hidden');
             this._leaveBtn.classList.remove('hidden');
-            this._addParticipant(this._userId, '(you)');
+            // Add self to members list
+            if (!this._voiceMembers.has(this._userId)) {
+                this._voiceMembers.set(this._userId, 'you');
+                this._addMemberDot(this._userId, 'you');
+            }
             showToast('Voice Chat', 'Joined voice chat!', 'success');
         } catch (err) {
             showToast('Voice Chat', 'Microphone access denied.', 'warning');
@@ -94,26 +143,47 @@ export class VoiceUI {
         this._muteBtn.textContent = '🎤';
         this._muteBtn.classList.remove('muted', 'speaking');
         this._micFill.style.height = '0%';
-        this._partList.innerHTML = '';
+        // Remove self from members list
+        this._voiceMembers.delete(this._userId);
+        this._removeMemberDot(this._userId);
         this._onSpeakingChange(this._userId, false);
         showToast('Voice Chat', 'Left voice chat.', 'info');
     }
 
-    _addParticipant(userId, label) {
+    // Add a dot for a voice member (visible to all, not just voice users)
+    _addMemberDot(userId, username) {
+        if (this._partList.querySelector(`[data-uid="${userId}"]`)) return;
         const dot = document.createElement('div');
         dot.className = 'voice-dot';
         dot.dataset.uid = userId;
-        dot.title = label;
+        dot.title = username;
         dot.textContent = '🎤';
         this._partList.appendChild(dot);
+        // Show the members list section if there's at least one member
+        this._membersList.style.display = 'block';
     }
 
-    _updateParticipantSpeaking(userId, speaking) {
+    _removeMemberDot(userId) {
+        const dot = this._partList.querySelector(`[data-uid="${userId}"]`);
+        if (dot) dot.remove();
+        if (this._partList.children.length === 0) {
+            this._membersList.style.display = 'none';
+        }
+    }
+
+    _updateMemberSpeaking(userId, speaking) {
         const dot = this._partList.querySelector(`[data-uid="${userId}"]`);
         if (dot) dot.classList.toggle('speaking', speaking);
     }
 
     destroy() {
+        const socket = getSocket();
+        if (socket) {
+            socket.off('voice:snapshot');
+            socket.off('voice:memberJoined');
+            socket.off('voice:memberLeft');
+            socket.off('voice:speakingUpdate');
+        }
         this._rtc?.destroy();
         this._el.remove();
     }

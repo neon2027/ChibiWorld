@@ -7,6 +7,7 @@ import { registerChatSocket } from './chatSocket.js';
 import { registerFriendSocket, broadcastOnlineStatus } from './friendSocket.js';
 import { registerRoomSocket } from './roomSocket.js';
 import { registerVoiceSocket } from './voiceSocket.js';
+import { registerMiniGameSocket } from './miniGameSocket.js';
 
 export function setupSockets(io, sessionMiddleware) {
     io.use(wrap(sessionMiddleware));
@@ -63,6 +64,7 @@ export function setupSockets(io, sessionMiddleware) {
         });
 
         registerVoiceSocket(io, socket, userId, user.username);
+        registerMiniGameSocket(io, socket, userId, user.username);
 
         socket.on('avatar:update', (data) => {
             // handled via REST — emit updated avatar to others

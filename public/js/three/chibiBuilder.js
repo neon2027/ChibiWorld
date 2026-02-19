@@ -245,17 +245,22 @@ function _buildAccessory(headGroup, type) {
     }
 }
 
-export function animateChibi(group, isMoving, dt) {
+export function animateChibi(group, isMoving, dt, isRunning = false) {
     const parts = group._parts;
     if (!parts) return;
 
     if (isMoving) {
-        group._walkPhase += dt * 8;
+        const phaseSpeed = isRunning ? 15 : 8;
+        const armSwing   = isRunning ? 0.85 : 0.55;
+        const bodyBob    = isRunning ? 0.20 : 0.12;
+        const headBob    = isRunning ? 0.10 : 0.06;
+
+        group._walkPhase += dt * phaseSpeed;
         const p = group._walkPhase;
-        if (parts.arms.left)  parts.arms.left.rotation.x  =  Math.sin(p) * 0.55;
-        if (parts.arms.right) parts.arms.right.rotation.x = -Math.sin(p) * 0.55;
-        parts.body.position.y = 2.55 + Math.abs(Math.sin(p * 2)) * 0.12;
-        parts.headGroup.position.y = 4.7 + Math.abs(Math.sin(p * 2)) * 0.06;
+        if (parts.arms.left)  parts.arms.left.rotation.x  =  Math.sin(p) * armSwing;
+        if (parts.arms.right) parts.arms.right.rotation.x = -Math.sin(p) * armSwing;
+        parts.body.position.y = 2.55 + Math.abs(Math.sin(p * 2)) * bodyBob;
+        parts.headGroup.position.y = 4.7 + Math.abs(Math.sin(p * 2)) * headBob;
     } else {
         group._idlePhase += dt * 1.8;
         const p = group._idlePhase;

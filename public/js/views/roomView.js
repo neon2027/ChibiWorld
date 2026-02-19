@@ -7,6 +7,8 @@ import { getSocket } from '../socket.js';
 import { api } from '../api.js';
 import { showToast } from '../ui/toast.js';
 import { VoiceUI } from '../voice/voiceUI.js';
+import { ChatPanel } from '../ui/chatPanel.js';
+import { MusicManager } from '../audio/musicManager.js';
 
 let _scene = null;
 let _playerGroup = null;
@@ -20,6 +22,8 @@ let _localRoomBubble = null;
 let _localRoomBubbleTimer = null;
 let _roomVoiceUI = null;
 let _localRoomMicEl = null;
+let _roomMusic = null;
+let _roomChat = null;
 
 // Room camera orbit state
 let _roomCamAzimuth = 0;
@@ -56,9 +60,11 @@ export async function renderRoom(container, params) {
         <div class="room-layout">
             <div class="room-canvas-wrap">
                 <canvas id="roomCanvas"></canvas>
-                <div class="movement-hint">WASD or Click to move &nbsp;•&nbsp; Right-drag to rotate &nbsp;•&nbsp; Scroll to zoom</div>
+                <div class="movement-hint">WASD / Click to move &nbsp;•&nbsp; Shift to run &nbsp;•&nbsp; Right-drag to rotate &nbsp;•&nbsp; Scroll to zoom</div>
+                <button class="music-btn" id="roomMusicBtn" title="Toggle background music">🎵</button>
             </div>
             <div class="room-sidebar">
+                <div class="room-chat-wrap" id="roomChatWrap"></div>
                 <div class="room-info-bar">
                     <span class="room-name" id="roomNameEl">Loading...</span>
                     <button class="btn btn-sm btn-outline" id="roomSettingsBtn">⚙</button>
@@ -177,7 +183,10 @@ export async function renderRoom(container, params) {
     _localRoomMicEl.style.display = 'none';
     canvas.parentElement.appendChild(_localRoomMicEl);
 
-    // Voice UI — appended to the room sidebar
+    // Chat panel — always available to all room users
+    _roomChat = new ChatPanel(container.querySelector('#roomChatWrap'), user);
+
+    // Voice UI — appended to the room sidebar below chat
     const voiceContainer = document.createElement('div');
     voiceContainer.className = 'voice-container';
     container.querySelector('.room-sidebar').appendChild(voiceContainer);
@@ -189,6 +198,28 @@ export async function renderRoom(container, params) {
             _playerMgr?.setMicSpeaking(uid, speaking);
         }
     });
+
+    // Background music
+    _roomMusic = new MusicManager();
+    const roomMusicBtn = container.querySelector('#roomMusicBtn');
+    roomMusicBtn.addEventListener('click', () => {
+        const playing = _roomMusic.toggle();
+        roomMusicBtn.textContent = playing ? '🔇' : '🎵';
+        roomMusicBtn.title = playing ? 'Stop music' : 'Play background music';
+        roomMusicBtn.classList.toggle('active', playing);
+    });
+    const _autoStartRoomMusic = () => {
+        if (!_roomMusic.playing) {
+            _roomMusic.start();
+            roomMusicBtn.textContent = '🔇';
+            roomMusicBtn.title = 'Stop music';
+            roomMusicBtn.classList.add('active');
+        }
+        canvas.removeEventListener('click', _autoStartRoomMusic);
+        window.removeEventListener('keydown', _autoStartRoomMusic);
+    };
+    canvas.addEventListener('click', _autoStartRoomMusic);
+    window.addEventListener('keydown', _autoStartRoomMusic);
 
     // Build local player chibi
     const av = user?.avatar || {};
@@ -333,7 +364,8 @@ export async function renderRoom(container, params) {
     let lastEmit = 0;
     _scene.onUpdate((dt) => {
         if (!_playerGroup) return;
-        const SPEED = 6;
+        const isRunning = !!(keys['ShiftLeft'] || keys['ShiftRight']);
+        const SPEED = isRunning ? 11 : 6;
         let rawDx = 0, rawDz = 0;
         if (keys['KeyW'] || keys['ArrowUp'])    rawDz -= 1;
         if (keys['KeyS'] || keys['ArrowDown'])  rawDz += 1;
@@ -356,7 +388,7 @@ export async function renderRoom(container, params) {
                 socket?.emit('room:move', { x: _playerGroup.position.x, z: _playerGroup.position.z });
             }
         }
-        animateChibi(_playerGroup, moved, dt);
+        animateChibi(_playerGroup, moved, dt, isRunning);
         _playerMgr.update(dt);
 
         // Update room camera from orbit state
@@ -469,6 +501,9 @@ export function destroyRoom() {
     _localRoomMicEl = null;
     _roomCamCleanup?.();
     _roomCamCleanup = null;
+    _roomMusic?.destroy();
+    _roomMusic = null;
+    _roomChat = null;
     _roomVoiceUI?.destroy();
     _roomVoiceUI = null;
     _playerMgr?.destroy();

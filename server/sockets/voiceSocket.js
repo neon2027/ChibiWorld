@@ -13,6 +13,20 @@ function getChannelKey(socketId) {
 
 export function registerVoiceSocket(io, socket, userId, username) {
 
+    // Send current voice members snapshot to any user entering the channel area
+    socket.on('voice:requestSnapshot', () => {
+        const channelKey = getChannelKey(socket.id);
+        if (!channelKey) return;
+        const channel = voiceChannels.get(channelKey);
+        const members = channel
+            ? [...channel].map(uid => {
+                const p = worldState.getPlayerByUserId(uid);
+                return { userId: uid, username: p?.username || '?' };
+            })
+            : [];
+        socket.emit('voice:snapshot', { members });
+    });
+
     socket.on('voice:join', () => {
         const channelKey = getChannelKey(socket.id);
         if (!channelKey) return;
@@ -20,11 +34,11 @@ export function registerVoiceSocket(io, socket, userId, username) {
         if (!voiceChannels.has(channelKey)) voiceChannels.set(channelKey, new Set());
         const channel = voiceChannels.get(channelKey);
 
-        // Tell the joiner about existing voice members
+        // Tell the joiner about existing voice members (for WebRTC setup)
         const existingMembers = [...channel].filter(id => id !== userId);
         socket.emit('voice:existingMembers', { members: existingMembers });
 
-        // Notify existing members that this user joined voice
+        // Notify existing voice members (for WebRTC offer)
         for (const memberId of channel) {
             const memberSocketId = worldState.getSocketIdByUserId(memberId);
             if (memberSocketId) {
@@ -33,6 +47,9 @@ export function registerVoiceSocket(io, socket, userId, username) {
         }
 
         channel.add(userId);
+
+        // Broadcast to ALL users in this location that someone joined voice
+        socket.to(channelKey).emit('voice:memberJoined', { userId, username });
         console.log(`[Voice] ${username} joined voice in ${channelKey}`);
     });
 
@@ -83,13 +100,16 @@ function _leaveVoice(io, socket, userId, username) {
             channel.delete(userId);
             if (channel.size === 0) voiceChannels.delete(key);
 
-            // Notify remaining members
+            // Notify remaining voice members (for WebRTC cleanup)
             for (const memberId of channel) {
                 const socketId = worldState.getSocketIdByUserId(memberId);
                 if (socketId) {
                     io.to(socketId).emit('voice:userLeft', { userId });
                 }
             }
+
+            // Broadcast to ALL users in this location that someone left voice
+            socket.to(key).emit('voice:memberLeft', { userId });
             console.log(`[Voice] ${username} left voice in ${key}`);
             break;
         }

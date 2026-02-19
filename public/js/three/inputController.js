@@ -49,8 +49,12 @@ export class InputController {
         }
     }
 
+    get isRunning() {
+        return !!(this._keys['ShiftLeft'] || this._keys['ShiftRight']);
+    }
+
     update(dt, playerGroup) {
-        const SPEED = 12; // Three.js units/sec
+        const SPEED = this.isRunning ? 22 : 12; // Three.js units/sec (run = 22, walk = 12)
         let moved = false;
 
         // WASD movement (camera-relative)
@@ -82,7 +86,7 @@ export class InputController {
             }
         }
 
-        // Click-to-move
+        // Click-to-move (always walk speed for click navigation)
         if (this._target) {
             const tdx = this._target.x - this._pos.x;
             const tdz = this._target.z - this._pos.z;
@@ -90,7 +94,7 @@ export class InputController {
             if (dist < 0.3) {
                 this._target = null;
             } else {
-                const step = Math.min(SPEED * dt, dist);
+                const step = Math.min(12 * dt, dist);
                 this._pos.x += (tdx / dist) * step;
                 this._pos.z += (tdz / dist) * step;
                 moved = true;

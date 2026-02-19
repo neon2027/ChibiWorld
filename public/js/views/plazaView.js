@@ -6,6 +6,8 @@ import { PlayerManager } from '../three/playerManager.js';
 import { InputController } from '../three/inputController.js';
 import { ChatPanel } from '../ui/chatPanel.js';
 import { VoiceUI } from '../voice/voiceUI.js';
+import { MusicManager } from '../audio/musicManager.js';
+import { MiniGameHub } from '../games/miniGameHub.js';
 import { getSocket } from '../socket.js';
 
 let _scene = null;
@@ -14,6 +16,9 @@ let _playerMgr = null;
 let _input = null;
 let _chat = null;
 let _voiceUI = null;
+let _music = null;
+let _miniGameHub = null;
+let _contextMenu = null;
 let _localBubble = null;
 let _localBubbleTimer = null;
 let _localMicEl = null;
@@ -35,7 +40,9 @@ export function renderPlaza(container) {
         <div class="plaza-layout">
             <div class="plaza-canvas-wrap">
                 <canvas id="plazaCanvas"></canvas>
-                <div class="movement-hint">WASD or Click to move &nbsp;•&nbsp; Right-drag to rotate &nbsp;•&nbsp; Scroll to zoom</div>
+                <div class="movement-hint">WASD / Click to move &nbsp;•&nbsp; Shift to run &nbsp;•&nbsp; Right-drag to rotate &nbsp;•&nbsp; Scroll to zoom</div>
+                <button class="music-btn" id="plazaMusicBtn" title="Toggle background music">🎵</button>
+                <button class="games-btn" id="plazaGamesBtn" title="Mini Games">🎮</button>
             </div>
             <div class="plaza-sidebar" id="chatSidebar"></div>
         </div>
@@ -118,8 +125,10 @@ export function renderPlaza(container) {
     _localBubble.style.display = 'none';
     canvas.parentElement.appendChild(_localBubble);
 
-    // Remote players
-    _playerMgr = new PlayerManager(_scene.scene);
+    // Remote players (with click-to-challenge support)
+    _playerMgr = new PlayerManager(_scene.scene, (userId, username, clientX, clientY) => {
+        _showPlayerContextMenu(userId, username, clientX, clientY);
+    });
     _playerMgr.setCamera(_scene.camera, canvas);
 
     // Input
@@ -134,6 +143,42 @@ export function renderPlaza(container) {
     _localMicEl.textContent = '🎤';
     _localMicEl.style.display = 'none';
     canvas.parentElement.appendChild(_localMicEl);
+
+    // Background music
+    _music = new MusicManager();
+    const musicBtn = container.querySelector('#plazaMusicBtn');
+    musicBtn.addEventListener('click', () => {
+        const playing = _music.toggle();
+        musicBtn.textContent = playing ? '🔇' : '🎵';
+        musicBtn.title = playing ? 'Stop music' : 'Play background music';
+        musicBtn.classList.toggle('active', playing);
+    });
+    // Auto-start music on first user interaction with the canvas
+    const _autoStartMusic = () => {
+        if (!_music.playing) {
+            _music.start();
+            musicBtn.textContent = '🔇';
+            musicBtn.title = 'Stop music';
+            musicBtn.classList.add('active');
+        }
+        canvas.removeEventListener('click', _autoStartMusic);
+        window.removeEventListener('keydown', _autoStartMusic);
+    };
+    canvas.addEventListener('click', _autoStartMusic);
+    window.addEventListener('keydown', _autoStartMusic);
+
+    // Games button
+    const gamesBtn = container.querySelector('#plazaGamesBtn');
+    gamesBtn.addEventListener('click', () => {
+        if (_miniGameHub) return; // already open
+        _miniGameHub = new MiniGameHub(user);
+        // Clean up hub reference when it's destroyed from inside
+        const origDestroy = _miniGameHub.destroy.bind(_miniGameHub);
+        _miniGameHub.destroy = () => { origDestroy(); _miniGameHub = null; };
+    });
+
+    // Dismiss context menu on canvas click
+    canvas.addEventListener('click', _dismissContextMenu, { capture: true });
 
     // Chat panel
     _chat = new ChatPanel(sidebar, user);
@@ -195,7 +240,7 @@ export function renderPlaza(container) {
 
         _input.camAzimuth = _camAzimuth;
         moving = _input.update(dt, _playerGroup);
-        animateChibi(_playerGroup, moving, dt);
+        animateChibi(_playerGroup, moving, dt, _input.isRunning);
 
         // Orbit camera around player
         const px = _playerGroup.position.x;
@@ -242,6 +287,57 @@ export function renderPlaza(container) {
     _scene.start();
 }
 
+function _showPlayerContextMenu(userId, username, clientX, clientY) {
+    _dismissContextMenu();
+
+    const GAME_TYPES = [
+        { type: 'ticTacToe',   label: 'Tic-Tac-Toe' },
+        { type: 'rps',         label: 'Rock Paper Scissors' },
+        { type: 'connectFour', label: 'Connect Four' },
+        { type: 'drawGuess',   label: 'Draw & Guess' },
+        { type: 'wordScramble',label: 'Word Scramble' },
+        { type: 'triviaQuiz',  label: 'Trivia Quiz' },
+    ];
+
+    const menu = document.createElement('div');
+    menu.className = 'player-ctx-menu';
+    menu.style.left = `${clientX}px`;
+    menu.style.top  = `${clientY}px`;
+    menu.innerHTML = `
+        <div class="ctx-username">👤 ${username}</div>
+        <div class="ctx-section">Challenge to…</div>
+        ${GAME_TYPES.map(g =>
+            `<button class="ctx-item" data-type="${g.type}">${g.label}</button>`
+        ).join('')}
+    `;
+
+    document.body.appendChild(menu);
+    _contextMenu = menu;
+
+    menu.querySelectorAll('.ctx-item').forEach(btn => {
+        btn.addEventListener('click', () => {
+            _dismissContextMenu();
+            // Open hub if not already open, then send invite
+            if (!_miniGameHub) {
+                const user = window._currentUser;
+                _miniGameHub = new MiniGameHub(user);
+                const origDestroy = _miniGameHub.destroy.bind(_miniGameHub);
+                _miniGameHub.destroy = () => { origDestroy(); _miniGameHub = null; };
+            }
+            _miniGameHub.challengePlayer(userId, btn.dataset.type);
+        });
+    });
+
+    // Dismiss on outside click
+    setTimeout(() => {
+        document.addEventListener('click', _dismissContextMenu, { once: true });
+    }, 0);
+}
+
+function _dismissContextMenu() {
+    if (_contextMenu) { _contextMenu.remove(); _contextMenu = null; }
+}
+
 function _showLocalBubble(text) {
     if (!_localBubble) return;
     clearTimeout(_localBubbleTimer);
@@ -276,11 +372,16 @@ export function destroyPlaza() {
         socket.off('chat:global');
     }
     clearTimeout(_localBubbleTimer);
+    _dismissContextMenu();
+    _miniGameHub?.destroy();
+    _miniGameHub = null;
     _localBubble = null;
     _localBubbleTimer = null;
     _localMicEl = null;
     _camCleanup?.();
     _camCleanup = null;
+    _music?.destroy();
+    _music = null;
     _voiceUI?.destroy();
     _voiceUI = null;
     _input?.destroy();
