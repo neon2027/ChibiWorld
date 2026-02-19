@@ -18,6 +18,15 @@ let _localBubble = null;
 let _localBubbleTimer = null;
 let _localMicEl = null;
 
+// Camera orbit state
+let _camAzimuth = 0;
+let _camElevation = 0.69;
+let _camDistance = 28;
+let _camDragging = false;
+let _camDragX = 0;
+let _camDragY = 0;
+let _camCleanup = null;
+
 export function renderPlaza(container) {
     const user = window._currentUser;
     const socket = getSocket();
@@ -26,7 +35,7 @@ export function renderPlaza(container) {
         <div class="plaza-layout">
             <div class="plaza-canvas-wrap">
                 <canvas id="plazaCanvas"></canvas>
-                <div class="movement-hint">WASD or Click to move</div>
+                <div class="movement-hint">WASD or Click to move &nbsp;•&nbsp; Right-drag to rotate &nbsp;•&nbsp; Scroll to zoom</div>
             </div>
             <div class="plaza-sidebar" id="chatSidebar"></div>
         </div>
@@ -43,6 +52,45 @@ export function renderPlaza(container) {
     // Camera: top-down isometric feel
     _scene.camera.position.set(0, 18, 22);
     _scene.camera.lookAt(0, 0, 0);
+
+    // Camera orbit controls (right-click drag + scroll wheel)
+    _camAzimuth = 0;
+    _camElevation = 0.69;
+    _camDistance = 28;
+    _camDragging = false;
+
+    const onContextMenu = (e) => e.preventDefault();
+    const onMouseDown = (e) => {
+        if (e.button === 2) { _camDragging = true; _camDragX = e.clientX; _camDragY = e.clientY; }
+    };
+    const onMouseUp = (e) => { if (e.button === 2) _camDragging = false; };
+    const onMouseMove = (e) => {
+        if (!_camDragging) return;
+        const dx = e.clientX - _camDragX;
+        const dy = e.clientY - _camDragY;
+        _camDragX = e.clientX;
+        _camDragY = e.clientY;
+        _camAzimuth -= dx * 0.008;
+        _camElevation = Math.max(0.2, Math.min(1.45, _camElevation + dy * 0.005));
+    };
+    const onWheel = (e) => {
+        e.preventDefault();
+        _camDistance = Math.max(8, Math.min(55, _camDistance + e.deltaY * 0.05));
+    };
+
+    canvas.addEventListener('contextmenu', onContextMenu);
+    canvas.addEventListener('mousedown', onMouseDown);
+    window.addEventListener('mouseup', onMouseUp);
+    window.addEventListener('mousemove', onMouseMove);
+    canvas.addEventListener('wheel', onWheel, { passive: false });
+
+    _camCleanup = () => {
+        canvas.removeEventListener('contextmenu', onContextMenu);
+        canvas.removeEventListener('mousedown', onMouseDown);
+        window.removeEventListener('mouseup', onMouseUp);
+        window.removeEventListener('mousemove', onMouseMove);
+        canvas.removeEventListener('wheel', onWheel);
+    };
 
     // Local player chibi
     const av = user?.avatar || {};
@@ -148,10 +196,15 @@ export function renderPlaza(container) {
         moving = _input.update(dt, _playerGroup);
         animateChibi(_playerGroup, moving, dt);
 
-        // Follow camera
+        // Orbit camera around player
         const px = _playerGroup.position.x;
         const pz = _playerGroup.position.z;
-        _scene.camera.position.lerp(new THREE.Vector3(px, 18, pz + 22), 0.07);
+        const sinA = Math.sin(_camAzimuth), cosA = Math.cos(_camAzimuth);
+        const cosE = Math.cos(_camElevation), sinE = Math.sin(_camElevation);
+        const camX = px + _camDistance * sinA * cosE;
+        const camY = _camDistance * sinE;
+        const camZ = pz + _camDistance * cosA * cosE;
+        _scene.camera.position.lerp(new THREE.Vector3(camX, camY, camZ), 0.07);
         _scene.camera.lookAt(new THREE.Vector3(px, 0, pz));
 
         // Update local label + bubble
@@ -225,6 +278,8 @@ export function destroyPlaza() {
     _localBubble = null;
     _localBubbleTimer = null;
     _localMicEl = null;
+    _camCleanup?.();
+    _camCleanup = null;
     _voiceUI?.destroy();
     _voiceUI = null;
     _input?.destroy();

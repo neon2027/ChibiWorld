@@ -21,6 +21,15 @@ let _localRoomBubbleTimer = null;
 let _roomVoiceUI = null;
 let _localRoomMicEl = null;
 
+// Room camera orbit state
+let _roomCamAzimuth = 0;
+let _roomCamElevation = 0.832;
+let _roomCamDistance = 16.28;
+let _roomCamDragging = false;
+let _roomCamDragX = 0;
+let _roomCamDragY = 0;
+let _roomCamCleanup = null;
+
 export async function renderRoom(container, params) {
     const user = window._currentUser;
     const socket = getSocket();
@@ -47,7 +56,7 @@ export async function renderRoom(container, params) {
         <div class="room-layout">
             <div class="room-canvas-wrap">
                 <canvas id="roomCanvas"></canvas>
-                <div class="movement-hint">WASD or Click to move</div>
+                <div class="movement-hint">WASD or Click to move &nbsp;•&nbsp; Right-drag to rotate &nbsp;•&nbsp; Scroll to zoom</div>
             </div>
             <div class="room-sidebar">
                 <div class="room-info-bar">
@@ -116,6 +125,45 @@ export async function renderRoom(container, params) {
     _scene.camera.position.set(ROOM_BOUNDS.w / 2, 12, ROOM_BOUNDS.d + 6);
     _scene.camera.lookAt(ROOM_BOUNDS.w / 2, 0, ROOM_BOUNDS.d / 2);
 
+    // Camera orbit controls (right-click drag + scroll wheel)
+    _roomCamAzimuth = 0;
+    _roomCamElevation = 0.832;
+    _roomCamDistance = 16.28;
+    _roomCamDragging = false;
+
+    const onRoomContextMenu = (e) => e.preventDefault();
+    const onRoomMouseDown = (e) => {
+        if (e.button === 2) { _roomCamDragging = true; _roomCamDragX = e.clientX; _roomCamDragY = e.clientY; }
+    };
+    const onRoomMouseUp = (e) => { if (e.button === 2) _roomCamDragging = false; };
+    const onRoomMouseMove = (e) => {
+        if (!_roomCamDragging) return;
+        const dx = e.clientX - _roomCamDragX;
+        const dy = e.clientY - _roomCamDragY;
+        _roomCamDragX = e.clientX;
+        _roomCamDragY = e.clientY;
+        _roomCamAzimuth -= dx * 0.008;
+        _roomCamElevation = Math.max(0.2, Math.min(1.45, _roomCamElevation + dy * 0.005));
+    };
+    const onRoomWheel = (e) => {
+        e.preventDefault();
+        _roomCamDistance = Math.max(6, Math.min(30, _roomCamDistance + e.deltaY * 0.04));
+    };
+
+    canvas.addEventListener('contextmenu', onRoomContextMenu);
+    canvas.addEventListener('mousedown', onRoomMouseDown);
+    window.addEventListener('mouseup', onRoomMouseUp);
+    window.addEventListener('mousemove', onRoomMouseMove);
+    canvas.addEventListener('wheel', onRoomWheel, { passive: false });
+
+    _roomCamCleanup = () => {
+        canvas.removeEventListener('contextmenu', onRoomContextMenu);
+        canvas.removeEventListener('mousedown', onRoomMouseDown);
+        window.removeEventListener('mouseup', onRoomMouseUp);
+        window.removeEventListener('mousemove', onRoomMouseMove);
+        canvas.removeEventListener('wheel', onRoomWheel);
+    };
+
     // Local speech bubble
     _localRoomBubble = document.createElement('div');
     _localRoomBubble.className = 'chat-bubble mine';
@@ -161,7 +209,7 @@ export async function renderRoom(container, params) {
     let ghostMesh = null;
 
     canvas.addEventListener('mousemove', (e) => {
-        if (!_placingItem || !_isOwner) return;
+        if (!_placingItem || !_isOwner || _roomCamDragging) return;
         const rect = canvas.getBoundingClientRect();
         const nx = ((e.clientX - rect.left) / rect.width) * 2 - 1;
         const ny = -((e.clientY - rect.top) / rect.height) * 2 + 1;
@@ -305,6 +353,20 @@ export async function renderRoom(container, params) {
         animateChibi(_playerGroup, moved, dt);
         _playerMgr.update(dt);
 
+        // Update room camera from orbit state
+        {
+            const cx = ROOM_BOUNDS.w / 2, cz = ROOM_BOUNDS.d / 2;
+            const sinA = Math.sin(_roomCamAzimuth), cosA = Math.cos(_roomCamAzimuth);
+            const cosE = Math.cos(_roomCamElevation), sinE = Math.sin(_roomCamElevation);
+            const targetPos = new THREE.Vector3(
+                cx + _roomCamDistance * sinA * cosE,
+                _roomCamDistance * sinE,
+                cz + _roomCamDistance * cosA * cosE
+            );
+            _scene.camera.position.lerp(targetPos, 0.12);
+            _scene.camera.lookAt(cx, 0, cz);
+        }
+
         // Update local bubble + mic positions
         {
             const w = canvas.clientWidth, h = canvas.clientHeight;
@@ -399,6 +461,8 @@ export function destroyRoom() {
     _localRoomBubble = null;
     _localRoomBubbleTimer = null;
     _localRoomMicEl = null;
+    _roomCamCleanup?.();
+    _roomCamCleanup = null;
     _roomVoiceUI?.destroy();
     _roomVoiceUI = null;
     _playerMgr?.destroy();
