@@ -15,8 +15,29 @@ export class InputController {
         this.camAzimuth = 0; // updated each frame from the view
         this._raycaster = new THREE.Raycaster();
         this._groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+        this._colliders = null; // array of { x, z, r }
+        this._playerRadius = 0.55;
 
-        this._onKey = (e) => { this._keys[e.code] = e.type === 'keydown'; };
+        // Jump state
+        this._jumpY        = 0;
+        this._jumpVel      = 0;
+        this._onGround     = true;
+        this._lastEmittedY = 0; // track vertical changes for emit
+
+        // Dance state (0 = none, 1–3 = dance)
+        this._danceId = 0;
+
+        this._onKey = (e) => {
+            this._keys[e.code] = e.type === 'keydown';
+            // Dance toggles on keydown only
+            if (e.type === 'keydown') {
+                const danceMap = { 'Digit1': 1, 'Digit2': 2, 'Digit3': 3 };
+                const d = danceMap[e.code];
+                if (d !== undefined) {
+                    this._danceId = (this._danceId === d) ? 0 : d;
+                }
+            }
+        };
         this._onClick = (e) => this._handleClick(e);
 
         window.addEventListener('keydown', this._onKey);
@@ -28,6 +49,10 @@ export class InputController {
         this._pos.x = worldX - 50;
         this._pos.z = worldZ - 50;
         this._target = null;
+    }
+
+    setColliders(colliders) {
+        this._colliders = colliders;
     }
 
     getWorldPosition() {
@@ -45,12 +70,31 @@ export class InputController {
             // Clamp to plaza
             target.x = Math.max(-50, Math.min(50, target.x));
             target.z = Math.max(-50, Math.min(50, target.z));
+            // Reject clicks that land inside a collider
+            if (this._colliders) {
+                for (const c of this._colliders) {
+                    const dx = target.x - c.x, dz = target.z - c.z;
+                    if (dx * dx + dz * dz < c.r * c.r) return;
+                }
+            }
             this._target = { x: target.x, z: target.z };
         }
     }
 
     get isRunning() {
         return !!(this._keys['ShiftLeft'] || this._keys['ShiftRight']);
+    }
+
+    get isJumping() {
+        return !this._onGround;
+    }
+
+    get jumpY() {
+        return this._jumpY;
+    }
+
+    get danceId() {
+        return this._danceId;
     }
 
     update(dt, playerGroup) {
@@ -66,6 +110,7 @@ export class InputController {
 
         if (rawDx !== 0 || rawDz !== 0) {
             this._target = null; // cancel click target
+            this._danceId = 0;  // cancel dance
             const len = Math.sqrt(rawDx * rawDx + rawDz * rawDz);
             const nx = rawDx / len, nz = rawDz / len;
 
@@ -105,14 +150,48 @@ export class InputController {
             }
         }
 
-        if (playerGroup) playerGroup.position.set(this._pos.x, 0, this._pos.z);
+        // Jump — Space triggers on the first frame it's held while grounded
+        if (this._keys['Space'] && this._onGround) {
+            this._jumpVel = 16;
+            this._onGround = false;
+        }
+        if (!this._onGround) {
+            this._jumpVel -= 40 * dt;      // gravity
+            this._jumpY   += this._jumpVel * dt;
+            if (this._jumpY <= 0) {
+                this._jumpY   = 0;
+                this._jumpVel = 0;
+                this._onGround = true;
+            }
+        }
 
-        // Emit to server at ~15Hz
+        // Resolve circle collisions — push player out of any overlapping obstacle
+        if (this._colliders) {
+            const PR = this._playerRadius;
+            for (const c of this._colliders) {
+                const dx = this._pos.x - c.x;
+                const dz = this._pos.z - c.z;
+                const dist2 = dx * dx + dz * dz;
+                const minDist = c.r + PR;
+                if (dist2 < minDist * minDist && dist2 > 0.0001) {
+                    const dist = Math.sqrt(dist2);
+                    const push = minDist - dist;
+                    this._pos.x += (dx / dist) * push;
+                    this._pos.z += (dz / dist) * push;
+                }
+            }
+        }
+
+        if (playerGroup) playerGroup.position.set(this._pos.x, this._jumpY, this._pos.z);
+
+        // Emit to server at ~15Hz — include vertical (jump) changes too
         const now = Date.now();
-        if (moved && now - this._lastEmit > 66) {
+        const yChanged = this._jumpY !== this._lastEmittedY;
+        if ((moved || yChanged) && now - this._lastEmit > 66) {
             this._lastEmit = now;
+            this._lastEmittedY = this._jumpY;
             const world = this.getWorldPosition();
-            this.onMove(world.x, world.z);
+            this.onMove(world.x, world.z, this._jumpY);
         }
 
         return moved;

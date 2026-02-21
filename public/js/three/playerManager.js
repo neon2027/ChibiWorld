@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { buildChibi, animateChibi } from './chibiBuilder.js';
+import { loadFBXCharacter, updateFBXAnimation } from './characterLoader.js';
 import { worldToThree } from './plazaWorld.js';
 
 // Manages all remote player chibi instances in the scene
@@ -23,7 +23,8 @@ export class PlayerManager {
     addPlayer({ id, username, x, z, avatar }) {
         if (this._players.has(id)) return;
         const pos = worldToThree(x, z);
-        const group = buildChibi(avatar || {});
+        const group = new THREE.Group();
+        loadFBXCharacter(group);
         group.position.set(pos.x, 0, pos.z);
         this.scene.add(group);
         
@@ -31,6 +32,7 @@ export class PlayerManager {
             group,
             targetX: pos.x, targetZ: pos.z,
             currentX: pos.x, currentZ: pos.z,
+            targetY: 0, currentY: 0,
             username, moving: false
         });
     }
@@ -48,23 +50,21 @@ export class PlayerManager {
         if (ct) { ct.remove(); this._clickTargets.delete(userId); }
     }
 
-    movePlayer(userId, wx, wz) {
+    movePlayer(userId, wx, wz, y = 0) {
         const p = this._players.get(userId);
         if (!p) return;
         const pos = worldToThree(wx, wz);
         p.targetX = pos.x;
         p.targetZ = pos.z;
+        p.targetY = y;
     }
 
     updateAvatar(userId, avatar) {
         const p = this._players.get(userId);
         if (!p) return;
         const { currentX, currentZ, username } = p;
-        this.scene.remove(p.group);
-        disposeGroup(p.group);
-        p.group = buildChibi(avatar);
-        p.group.position.set(currentX, 0, currentZ);
-        this.scene.add(p.group);
+        // FBX model is shared — avatar colour options no longer apply.
+        // Nothing to rebuild; just keep the existing group.
     }
 
     update(dt) {
@@ -86,8 +86,9 @@ export class PlayerManager {
                 }
             }
 
-            p.group.position.set(p.currentX, 0, p.currentZ);
-            animateChibi(p.group, p.moving, dt);
+            p.currentY += (p.targetY - p.currentY) * 0.3; // lerp vertical for smoothness
+            p.group.position.set(p.currentX, p.currentY, p.currentZ);
+            updateFBXAnimation(p.group, p.moving, dt, false);
         }
 
         // Update nametag positions if camera available

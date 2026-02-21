@@ -29,7 +29,7 @@ export function registerWorldSocket(io, socket) {
         });
     });
 
-    socket.on('plaza:move', ({ x, z }) => {
+    socket.on('plaza:move', ({ x, z, y = 0 }) => {
         const now = Date.now();
         if (now - lastMove.t < RATE_LIMIT_MS) return;
         lastMove.t = now;
@@ -37,9 +37,10 @@ export function registerWorldSocket(io, socket) {
         if (typeof x !== 'number' || typeof z !== 'number') return;
         const cx = Math.max(0, Math.min(PLAZA_SIZE, x));
         const cz = Math.max(0, Math.min(PLAZA_SIZE, z));
+        const cy = Math.max(0, Math.min(10, typeof y === 'number' ? y : 0));
 
         worldState.movePlayer(socket.id, cx, cz);
-        socket.to('plaza').emit('plaza:playerMoved', { userId: worldState.getPlayer(socket.id)?.userId, x: cx, z: cz });
+        socket.to('plaza').emit('plaza:playerMoved', { userId: worldState.getPlayer(socket.id)?.userId, x: cx, z: cz, y: cy });
     });
 
     socket.on('plaza:leave', () => {

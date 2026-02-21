@@ -417,3 +417,55 @@ export function worldToThree(wx, wz) {
 export function threeToWorld(tx, tz) {
     return { x: tx + 50, z: tz + 50 };
 }
+
+// ── COLLISION CIRCLES ─────────────────────────────────────────────────────────
+// Returns an array of { x, z, r } circles in Three.js space covering every
+// static object in the plaza. Used by InputController for push-out collision.
+export function getPlazaColliders() {
+    const c = [];
+
+    // Fountain base (outer ring radius 4.8)
+    c.push({ x: 0, z: 0, r: 5.0 });
+
+    // Trees
+    const treePts = [
+        [-40,-40],[-34,-38],[-38,-34],
+        [ 40,-40],[ 34,-38],[ 38,-34],
+        [-40, 40],[-34, 38],[-38, 34],
+        [ 40, 40],[ 34, 38],[ 38, 34],
+        [-10,-42],[10,-42],[-10,42],[10,42],
+        [-42,-10],[-42,10],[42,-10],[42,10],
+        [-18,-18],[18,-18],[-18,18],[18,18],
+        [-22,-8],[22,-8],[-22,8],[22,8],
+        [-8,-22],[8,-22],[-8,22],[8,22],
+    ];
+    for (const [x, z] of treePts) c.push({ x, z, r: 1.3 });
+
+    // Lanterns — 4 diagonal near fountain
+    for (let i = 0; i < 4; i++) {
+        const a = (i / 4) * Math.PI * 2 + Math.PI / 4;
+        c.push({ x: Math.cos(a) * 14.5, z: Math.sin(a) * 14.5, r: 0.45 });
+    }
+    // Lanterns along paths
+    for (const [x, z] of [[-26,0],[26,0],[0,-26],[0,26],[-40,0],[40,0],[0,-40],[0,40]]) {
+        c.push({ x, z, r: 0.45 });
+    }
+
+    // Benches (diagonal from fountain, radius ~10)
+    for (let i = 0; i < 4; i++) {
+        const a = (i / 4) * Math.PI * 2 + Math.PI / 4;
+        c.push({ x: Math.cos(a) * 10, z: Math.sin(a) * 10, r: 1.4 });
+    }
+
+    // Decorative rocks
+    for (const [x, z] of [[-16,-5],[16,-5],[-16,5],[16,5],[-5,-16],[5,-16],[-5,16],[5,16]]) {
+        c.push({ x, z, r: 0.7 });
+    }
+
+    // Barrel props (outer edges)
+    for (const [x, z] of [[38,-36],[-38,-36],[38,36],[-38,36],[0,-44],[0,44]]) {
+        c.push({ x, z, r: 1.2 });
+    }
+
+    return c;
+}

@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { SceneManager } from '../three/sceneManager.js';
-import { buildPlaza, worldToThree } from '../three/plazaWorld.js';
-import { buildChibi, animateChibi } from '../three/chibiBuilder.js';
+import { buildPlaza, worldToThree, getPlazaColliders } from '../three/plazaWorld.js';
+import { loadFBXCharacter, updateFBXAnimation } from '../three/characterLoader.js';
 import { PlayerManager } from '../three/playerManager.js';
 import { InputController } from '../three/inputController.js';
 import { ChatPanel } from '../ui/chatPanel.js';
@@ -40,7 +40,7 @@ export function renderPlaza(container) {
         <div class="plaza-layout">
             <div class="plaza-canvas-wrap">
                 <canvas id="plazaCanvas"></canvas>
-                <div class="movement-hint">WASD / Click to move &nbsp;•&nbsp; Shift to run &nbsp;•&nbsp; Right-drag to rotate &nbsp;•&nbsp; Scroll to zoom</div>
+                <div class="movement-hint">WASD / Click to move &nbsp;•&nbsp; Shift to run &nbsp;•&nbsp; Space to jump &nbsp;•&nbsp; 1/2/3 to dance</div>
                 <button class="music-btn" id="plazaMusicBtn" title="Toggle background music">🎵</button>
                 <button class="games-btn" id="plazaGamesBtn" title="Mini Games">🎮</button>
             </div>
@@ -99,18 +99,11 @@ export function renderPlaza(container) {
         canvas.removeEventListener('wheel', onWheel);
     };
 
-    // Local player chibi
-    const av = user?.avatar || {};
-    const avatarOpts = {
-        skinTone:    av.skin_tone    || '#f5c890',
-        hairColor:   av.hair_color   || '#4a3728',
-        hairStyle:   av.hair_style   ?? 0,
-        outfitColor: av.outfit_color || '#ff7eb3',
-        eyeColor:    av.eye_color    || '#3a2a1a',
-        accessory:   av.accessory    ?? 0
-    };
-    _playerGroup = buildChibi(avatarOpts);
+    // Local player — container group is in the scene immediately;
+    // the FBX mesh loads async and attaches itself as a child.
+    _playerGroup = new THREE.Group();
     _scene.scene.add(_playerGroup);
+    loadFBXCharacter(_playerGroup);
 
     // Local name label
     const localLabel = document.createElement('div');
@@ -132,10 +125,11 @@ export function renderPlaza(container) {
     _playerMgr.setCamera(_scene.camera, canvas);
 
     // Input
-    _input = new InputController(canvas, _scene.camera, (wx, wz) => {
-        socket?.emit('plaza:move', { x: wx, z: wz });
+    _input = new InputController(canvas, _scene.camera, (wx, wz, wy = 0) => {
+        socket?.emit('plaza:move', { x: wx, z: wz, y: wy });
     });
     _input.setPosition(50, 50);
+    _input.setColliders(getPlazaColliders());
 
     // Local mic icon (shown above local player's head when speaking)
     _localMicEl = document.createElement('div');
@@ -213,8 +207,8 @@ export function renderPlaza(container) {
             _playerMgr.removePlayer(userId);
         });
 
-        socket.on('plaza:playerMoved', ({ userId, x, z }) => {
-            _playerMgr.movePlayer(userId, x, z);
+        socket.on('plaza:playerMoved', ({ userId, x, z, y = 0 }) => {
+            _playerMgr.movePlayer(userId, x, z, y);
         });
 
         socket.on('avatar:updated', ({ userId, avatar }) => {
@@ -240,7 +234,7 @@ export function renderPlaza(container) {
 
         _input.camAzimuth = _camAzimuth;
         moving = _input.update(dt, _playerGroup);
-        animateChibi(_playerGroup, moving, dt, _input.isRunning);
+        updateFBXAnimation(_playerGroup, moving, dt, _input.isRunning);
 
         // Orbit camera around player
         const px = _playerGroup.position.x;
