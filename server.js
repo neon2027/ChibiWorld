@@ -32,6 +32,7 @@ const sessionMiddleware = session({
 app.use(express.json());
 app.use(sessionMiddleware);
 app.use(express.static('public'));
+app.use('/assets', express.static('assets'));
 
 // Auth routes
 app.use('/api/auth', authRoutes);

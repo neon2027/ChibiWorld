@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
 // All positions are in Three.js space: center (0,0), range roughly -50 to +50
 export function buildPlaza(scene) {
@@ -152,6 +153,9 @@ export function buildPlaza(scene) {
 
     // ── STARS ────────────────────────────────────────────────────────────
     _buildStars(scene);
+
+    // ── BARREL WITH SWORD (background props) ─────────────────────────────
+    _loadBarrelProps(scene);
 }
 
 // ── BUILDERS ─────────────────────────────────────────────────────────────────
@@ -375,6 +379,33 @@ function _buildStars(scene) {
     geo.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
     const stars = new THREE.Points(geo, new THREE.PointsMaterial({ color: 0xffffff, size: 0.28, transparent: true, opacity: 0.7 }));
     scene.add(stars);
+}
+
+function _loadBarrelProps(scene) {
+    // Scatter barrel-with-sword props around the outer plaza edges as atmosphere.
+    // Positions [x, z, rotY] — kept well outside the play area.
+    const placements = [
+        [ 38, -36,  0.4],
+        [-38, -36, -0.4],
+        [ 38,  36,  2.8],
+        [-38,  36,  2.4],
+        [  0, -44,  0.0],
+        [  0,  44,  Math.PI],
+    ];
+
+    const loader = new GLTFLoader();
+    loader.load('/assets/barrel-with-sword.glb', (gltf) => {
+        placements.forEach(([x, z, rotY]) => {
+            const clone = gltf.scene.clone(true);
+            clone.position.set(x, 0, z);
+            clone.rotation.y = rotY;
+            clone.scale.setScalar(0.7);
+            clone.traverse((node) => {
+                if (node.isMesh) node.castShadow = true;
+            });
+            scene.add(clone);
+        });
+    });
 }
 
 // ── COORDINATE UTILITIES ──────────────────────────────────────────────────────
