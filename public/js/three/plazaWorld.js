@@ -90,30 +90,10 @@ export function buildPlaza(scene) {
     scene.add(plazaRing);
 
     // ── FOUNTAIN (center) ─────────────────────────────────────────────────
-    _buildFountain(scene, 0, 0);
+    _loadFountainGLB(scene);
 
     // ── TREES ─────────────────────────────────────────────────────────────
-    // Spread trees within bounds, avoiding the stone paths (±3 wide)
-    const treePositions = [
-        // Far corners
-        [-40, -40], [-34, -38], [-38, -34],
-        [ 40, -40], [ 34, -38], [ 38, -34],
-        [-40,  40], [-34,  38], [-38,  34],
-        [ 40,  40], [ 34,  38], [ 38,  34],
-        // Mid-sides (offset off the path)
-        [-10, -42], [10, -42],
-        [-10,  42], [10,  42],
-        [-42, -10], [-42, 10],
-        [ 42, -10], [ 42, 10],
-        // Inner ring (off paths)
-        [-18, -18], [18, -18],
-        [-18,  18], [18,  18],
-        [-22, -8], [22, -8],
-        [-22,  8], [22,  8],
-        [-8, -22], [ 8, -22],
-        [-8,  22], [ 8,  22],
-    ];
-    for (const [x, z] of treePositions) _buildTree(scene, x, z);
+    _loadGLBTrees(scene);
 
     // ── FLOWER BUSHES ─────────────────────────────────────────────────────
     const flowerColors = [0xff6b8a, 0xff9f43, 0xffd32a, 0x7bed9f, 0x70a1ff, 0xf368e0];
@@ -160,89 +140,101 @@ export function buildPlaza(scene) {
 
 // ── BUILDERS ─────────────────────────────────────────────────────────────────
 
-function _buildFountain(scene, x, z) {
-    // Outer base ring
-    const base = new THREE.Mesh(
-        new THREE.CylinderGeometry(4.2, 4.8, 0.9, 24),
-        new THREE.MeshPhongMaterial({ color: 0x7788aa, specular: 0x9999cc, shininess: 60 })
-    );
-    base.position.set(x, 0.45, z);
-    base.castShadow = true;
-    scene.add(base);
+function _loadFountainGLB(scene) {
+    const loader = new GLTFLoader();
+    loader.load('/assets/Fountain.glb', (gltf) => {
+        const fountain = gltf.scene;
 
-    // Inner water basin
-    const basin = new THREE.Mesh(
-        new THREE.CylinderGeometry(3.8, 3.8, 0.6, 24),
-        new THREE.MeshPhongMaterial({ color: 0x556688 })
-    );
-    basin.position.set(x, 0.7, z);
-    scene.add(basin);
+        // Measure raw bounding box to auto-scale the model to ~9 units diameter (r≈4.5)
+        const box = new THREE.Box3().setFromObject(fountain);
+        const size = new THREE.Vector3();
+        box.getSize(size);
+        const maxXZ = Math.max(size.x, size.z);
+        if (maxXZ > 0) fountain.scale.setScalar(9.0 / maxXZ);
 
-    // Water surface
-    const water = new THREE.Mesh(
-        new THREE.CylinderGeometry(3.6, 3.6, 0.05, 24),
-        new THREE.MeshPhongMaterial({ color: 0x55aaee, transparent: true, opacity: 0.75, specular: 0xaaddff, shininess: 120 })
-    );
-    water.position.set(x, 1.02, z);
-    scene.add(water);
+        // Sit flush on the ground plane (y=0)
+        const box2 = new THREE.Box3().setFromObject(fountain);
+        fountain.position.y = -box2.min.y;
 
-    // Center pillar
-    const pillar = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.35, 0.45, 3.2, 10),
-        new THREE.MeshPhongMaterial({ color: 0x7788aa })
-    );
-    pillar.position.set(x, 1.6, z);
-    pillar.castShadow = true;
-    scene.add(pillar);
+        fountain.traverse(child => {
+            if (child.isMesh) {
+                child.castShadow = true;
+                child.receiveShadow = true;
+            }
+        });
 
-    // Upper bowl (torus)
-    const bowl = new THREE.Mesh(
-        new THREE.TorusGeometry(1.1, 0.3, 8, 20),
-        new THREE.MeshPhongMaterial({ color: 0x8899bb })
-    );
-    bowl.position.set(x, 3.3, z);
-    scene.add(bowl);
+        scene.add(fountain);
 
-    // Water droplets arcing outward
-    for (let i = 0; i < 10; i++) {
-        const angle = (i / 10) * Math.PI * 2;
-        const drop = new THREE.Mesh(
-            new THREE.SphereGeometry(0.1, 6, 5),
-            new THREE.MeshBasicMaterial({ color: 0x99ddff })
-        );
-        const r = 0.8 + (i % 3) * 0.3;
-        drop.position.set(x + Math.cos(angle) * r, 3.6 + Math.sin(i * 1.3) * 0.4, z + Math.sin(angle) * r);
-        scene.add(drop);
-    }
-
-    // Fountain glow
-    const light = new THREE.PointLight(0x44aaff, 2.0, 18);
-    light.position.set(x, 2.5, z);
-    scene.add(light);
+        // Blue glow above the fountain centre
+        const light = new THREE.PointLight(0x44aaff, 2.0, 18);
+        light.position.set(0, 2.5, 0);
+        scene.add(light);
+    });
 }
 
-function _buildTree(scene, x, z) {
-    const trunkH = 1.8 + Math.random() * 1.2;
-    const trunk = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.22, 0.32, trunkH, 8),
-        new THREE.MeshPhongMaterial({ color: 0x5c3d1e })
-    );
-    trunk.position.set(x, trunkH / 2, z);
-    trunk.castShadow = true;
-    scene.add(trunk);
+function _loadGLBTrees(scene) {
+    const treePositions = [
+        // Far corners
+        [-40, -40], [-34, -38], [-38, -34],
+        [ 40, -40], [ 34, -38], [ 38, -34],
+        [-40,  40], [-34,  38], [-38,  34],
+        [ 40,  40], [ 34,  38], [ 38,  34],
+        // Mid-sides (offset off the path)
+        [-10, -42], [10, -42],
+        [-10,  42], [10,  42],
+        [-42, -10], [-42, 10],
+        [ 42, -10], [ 42, 10],
+        // Inner ring (off paths)
+        [-18, -18], [18, -18],
+        [-18,  18], [18,  18],
+        [-22, -8], [22, -8],
+        [-22,  8], [22,  8],
+        [-8, -22], [ 8, -22],
+        [-8,  22], [ 8,  22],
+    ];
 
-    // Three layered cones (pine tree shape)
-    const leafColors = [0x1e5c30, 0x2d7a40, 0x3d9a52];
-    for (let i = 0; i < 3; i++) {
-        const r = 2.0 - i * 0.45;
-        const leaf = new THREE.Mesh(
-            new THREE.ConeGeometry(r, 2.0, 8),
-            new THREE.MeshPhongMaterial({ color: leafColors[i] })
-        );
-        leaf.position.set(x, trunkH + i * 1.3 + 0.7, z);
-        leaf.castShadow = true;
-        scene.add(leaf);
-    }
+    const loader = new GLTFLoader();
+    const models = [null, null];
+    let loaded = 0;
+
+    // Deterministic pseudo-random based on position — same result every load for every player
+    const drand = (seed) => { const s = Math.sin(seed) * 43758.5453123; return s - Math.floor(s); };
+
+    const placeTrees = () => {
+        for (const [x, z] of treePositions) {
+            const seed = x * 1000 + z;
+            const idx = drand(seed) < 0.5 ? 0 : 1;
+            const src = models[idx];
+            const tree = src.clone(true);
+            // Tree_1 (idx 0) is slightly smaller than Tree_2
+            const scale = idx === 0
+                ? 0.7 + drand(seed + 1) * 0.2
+                : 0.9 + drand(seed + 1) * 0.2;
+            tree.scale.setScalar(scale);
+            tree.position.set(x, 0, z);
+            tree.rotation.y = drand(seed + 2) * Math.PI * 2;
+            // Sit flush on the ground after scale is applied
+            const box = new THREE.Box3().setFromObject(tree);
+            tree.position.y = -box.min.y;
+            tree.traverse(child => {
+                if (child.isMesh) {
+                    child.castShadow = true;
+                    child.receiveShadow = true;
+                }
+            });
+            scene.add(tree);
+        }
+    };
+
+    loader.load('/assets/Tree_1.glb', (gltf) => {
+        models[0] = gltf.scene;
+        if (++loaded === 2) placeTrees();
+    });
+
+    loader.load('/assets/Tree_2.glb', (gltf) => {
+        models[1] = gltf.scene;
+        if (++loaded === 2) placeTrees();
+    });
 }
 
 function _buildFlowerBush(scene, x, z, color) {
@@ -424,7 +416,7 @@ export function threeToWorld(tx, tz) {
 export function getPlazaColliders() {
     const c = [];
 
-    // Fountain base (outer ring radius 4.8)
+    // Fountain GLB — auto-scaled to ~9 unit diameter → r=4.5, +0.5 buffer
     c.push({ x: 0, z: 0, r: 5.0 });
 
     // Trees

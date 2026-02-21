@@ -1,4 +1,6 @@
 import * as THREE from 'three';
+import { RGBELoader } from 'three/addons/loaders/RGBELoader.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 
 export class SceneManager {
     constructor(canvas) {
@@ -20,7 +22,7 @@ export class SceneManager {
         this.camera.position.set(0, 12, 20);
         this.camera.lookAt(0, 3, 0);
 
-        // Renderer
+        // Renderer — enable physically-correct settings required for HDR
         this.renderer = new THREE.WebGLRenderer({ canvas: this.canvas, antialias: true, alpha: false });
         this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
         this.renderer.setSize(w, h, false);
@@ -28,9 +30,61 @@ export class SceneManager {
         this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
         this.renderer.setClearColor(0x0d1a0d);
 
+        // ── HDR output settings ─────────────────────────────────────────────
+        // Tone mapping converts HDR linear values to displayable LDR.
+        // ACESFilmic gives film-like contrast; exposure 1.0 is neutral.
+        this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+        this.renderer.toneMappingExposure = 1.0;
+        // sRGB colour space so textures / env map colours are decoded correctly.
+        this.renderer.outputColorSpace = THREE.SRGBColorSpace;
+
+        // ── Environment map (IBL) ───────────────────────────────────────────
+        this._setupEnvironment();
+
         // Resize
         this._ro = new ResizeObserver(() => this._resize());
         this._ro.observe(this.canvas.parentElement || document.body);
+    }
+
+    /**
+     * Loads an environment map for Image-Based Lighting (IBL).
+     *
+     * Priority:
+     *  1. /assets/environment.hdr  — drop any .hdr here for full HDR lighting
+     *  2. RoomEnvironment          — procedural fallback, no file needed
+     *
+     * Both paths use PMREMGenerator so the cubemap mip-chain is pre-filtered
+     * for roughness, giving correct reflections on metallic/rough surfaces.
+     */
+    _setupEnvironment() {
+        const pmrem = new THREE.PMREMGenerator(this.renderer);
+        pmrem.compileEquirectangularShader();
+
+        const applyEnv = (texture) => {
+            this.scene.environment = texture;
+            // Uncomment the line below to also use the HDR as the scene background:
+            // this.scene.background = texture;
+            pmrem.dispose();
+        };
+
+        new RGBELoader().load(
+            '/assets/environment.hdr',
+            (hdrTexture) => {
+                // HDR file found — process through PMREMGenerator for pre-filtered mips
+                const envMap = pmrem.fromEquirectangular(hdrTexture).texture;
+                hdrTexture.dispose();
+                applyEnv(envMap);
+                console.log('[SceneManager] HDR environment map loaded.');
+            },
+            undefined,
+            () => {
+                // No HDR file — fall back to the built-in RoomEnvironment.
+                // PMREMGenerator still runs, so metallic surfaces reflect correctly.
+                const envMap = pmrem.fromScene(new RoomEnvironment()).texture;
+                applyEnv(envMap);
+                console.log('[SceneManager] Using RoomEnvironment fallback (add /assets/environment.hdr for HDR lighting).');
+            }
+        );
     }
 
     _resize() {

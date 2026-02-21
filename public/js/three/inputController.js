@@ -98,7 +98,7 @@ export class InputController {
     }
 
     update(dt, playerGroup) {
-        const SPEED = this.isRunning ? 22 : 12; // Three.js units/sec (run = 22, walk = 12)
+        const SPEED = this.isRunning ? 16 : 7; // Three.js units/sec (run = 16, walk = 7)
         let moved = false;
 
         // WASD movement (camera-relative)
@@ -139,7 +139,7 @@ export class InputController {
             if (dist < 0.3) {
                 this._target = null;
             } else {
-                const step = Math.min(12 * dt, dist);
+                const step = Math.min(7 * dt, dist);
                 this._pos.x += (tdx / dist) * step;
                 this._pos.z += (tdz / dist) * step;
                 moved = true;

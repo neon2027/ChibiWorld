@@ -248,10 +248,13 @@ export function renderPlaza(container) {
         _scene.camera.lookAt(new THREE.Vector3(px, 0, pz));
 
         // Update local label + bubble
+        // py tracks jump so labels rise with the character
         {
-            const pos3D = new THREE.Vector3(px, 8.5, pz);
-            pos3D.project(_scene.camera);
+            const py = _playerGroup.position.y;
             const w = canvas.clientWidth, h = canvas.clientHeight;
+
+            const pos3D = new THREE.Vector3(px, py + 3.0, pz);
+            pos3D.project(_scene.camera);
             const sx = (pos3D.x * 0.5 + 0.5) * w;
             const sy = (-pos3D.y * 0.5 + 0.5) * h;
             const visible = pos3D.z < 1;
@@ -261,14 +264,14 @@ export function renderPlaza(container) {
             localLabel.style.display = visible ? 'block' : 'none';
 
             if (_localBubble && _localBubble.style.display !== 'none') {
-                const bubblePos = new THREE.Vector3(px, 11, pz);
+                const bubblePos = new THREE.Vector3(px, py + 3.6, pz);
                 bubblePos.project(_scene.camera);
                 _localBubble.style.left = `${(bubblePos.x * 0.5 + 0.5) * w}px`;
                 _localBubble.style.top = `${(-bubblePos.y * 0.5 + 0.5) * h}px`;
             }
 
             if (_localMicEl && _localMicEl.style.display !== 'none') {
-                const micPos = new THREE.Vector3(px, 13, pz);
+                const micPos = new THREE.Vector3(px, py + 4.0, pz);
                 micPos.project(_scene.camera);
                 _localMicEl.style.left = `${(micPos.x * 0.5 + 0.5) * w}px`;
                 _localMicEl.style.top = `${(-micPos.y * 0.5 + 0.5) * h}px`;

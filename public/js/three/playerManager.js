@@ -110,8 +110,9 @@ export class PlayerManager {
                 this._labels.set(id, label);
             }
 
-            // Project 3D position to screen (nametag at y=8.5, bubble at y=11)
-            const pos3D = new THREE.Vector3(p.currentX, 8.5, p.currentZ);
+            // Project 3D position to screen — use currentY so label rises during jumps
+            const py = p.currentY ?? 0;
+            const pos3D = new THREE.Vector3(p.currentX, py + 3.0, p.currentZ);
             pos3D.project(this._camera);
 
             const sx = (pos3D.x * 0.5 + 0.5) * w;
@@ -122,10 +123,10 @@ export class PlayerManager {
             label.style.left = `${sx}px`;
             label.style.top = `${sy}px`;
 
-            // Update bubble position (slightly above nametag)
+            // Bubble slightly above the nametag
             const b = this._bubbles.get(id);
             if (b && b.element.style.display !== 'none') {
-                const bpos = new THREE.Vector3(p.currentX, 11, p.currentZ);
+                const bpos = new THREE.Vector3(p.currentX, py + 3.6, p.currentZ);
                 bpos.project(this._camera);
                 b.element.style.left = `${(bpos.x * 0.5 + 0.5) * w}px`;
                 b.element.style.top = `${(-bpos.y * 0.5 + 0.5) * h}px`;
@@ -151,7 +152,7 @@ export class PlayerManager {
                 this._clickTargets.set(id, ct);
             }
 
-            const pos3D = new THREE.Vector3(p.currentX, 5, p.currentZ);
+            const pos3D = new THREE.Vector3(p.currentX, (p.currentY ?? 0) + 1.5, p.currentZ);
             pos3D.project(this._camera);
             const sx = (pos3D.x * 0.5 + 0.5) * w;
             const sy = (-pos3D.y * 0.5 + 0.5) * h;
